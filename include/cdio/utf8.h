@@ -19,7 +19,7 @@
  *
  *  \brief UTF-8 support
  */
-
+
 
 #include <cdio/types.h>
 
@@ -98,7 +98,7 @@ bool cdio_charset_to_utf8(const char *src, size_t src_len, cdio_utf8_t **dst,
 #ifdef _WIN32
 /** \brief Convert an UTF8 string to UTF-16 (allocate returned string)
  *  \param str Source string
- *  \returns NULL if the conversion was unsuccesful. Caller must free the
+ *  \returns NULL if the conversion was unsuccessful. Caller must free the
  *  returned string with cdio_free().
  *  This is a convenience function available on Windows platforms only.
  */

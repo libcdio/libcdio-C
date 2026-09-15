@@ -12,7 +12,7 @@
 #   You should have received a copy of the GNU General Public License
 #   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-EXTRA_DIST = doxygen/Doxyfile.in doxygen/run_doxygen
+EXTRA_DIST = doxygen/Doxyfile.in doxygen/mainpage.md doxygen/run_doxygen
 info_TEXINFOS = libcdio.texi
 libcdio_TEXINFOS = fdl.texi glossary.texi
 
