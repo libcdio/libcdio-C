@@ -41,6 +41,7 @@
 #endif
 
 #include <cdio/cdio.h>
+#include <cdio/audio.h>
 #include <cdio/logging.h>
 #include "helper.h"
 
@@ -164,12 +165,34 @@ check_rw_raw(void)
     goto out;
   }
 
+  /* The sub-channel is that of the last sector read: in the pregap of
+     track 2, then after its index 1 */
+  for (lsn = 7; lsn <= 9; lsn += 2) {
+    cdio_subchannel_t sub;
+    const lba_t lba = cdio_lsn_to_lba(lsn);
+
+    if (DRIVER_OP_SUCCESS != cdio_read_audio_sectors(p_cdio, buf, lsn, 1) ||
+	DRIVER_OP_SUCCESS != cdio_audio_read_subchannel(p_cdio, &sub) ||
+	1 != sub.address || 0 != sub.control || 2 != sub.track ||
+	(lsn < 8 ? 0 : 1) != sub.index ||
+	to_bcd(lba / CDIO_CD_FRAMES_PER_MIN) != sub.abs_addr.m ||
+	to_bcd(lba / CDIO_CD_FRAMES_PER_SEC % CDIO_CD_SECS_PER_MIN) !=
+	sub.abs_addr.s ||
+	to_bcd(lba % CDIO_CD_FRAMES_PER_SEC) != sub.abs_addr.f) {
+      fprintf(stderr, "Incorrect: %s sub-channel after reading LSN %d.\n",
+	      toc_name, lsn);
+      ret = 1;
+      goto out;
+    }
+  }
+
  out:
   cdio_destroy(p_cdio);
   return ret;
 }
 
-/* An image without sub-channel data only reads without it */
+/* An image without sub-channel data only reads without it, and has no
+   sub-channel position */
 static int
 check_no_subchannel(void)
 {
@@ -197,6 +220,13 @@ check_no_subchannel(void)
 	     cdio_read_audio_sectors_sub(p_cdio, buf, 0, CDIO_READ_SUB_Q, 1)) {
     fprintf(stderr, "Incorrect: %s read with sub-channel.\n", toc_name);
     ret = 1;
+  } else {
+    cdio_subchannel_t sub;
+
+    if (DRIVER_OP_UNSUPPORTED != cdio_audio_read_subchannel(p_cdio, &sub)) {
+      fprintf(stderr, "Incorrect: %s sub-channel position.\n", toc_name);
+      ret = 1;
+    }
   }
 
   cdio_destroy(p_cdio);

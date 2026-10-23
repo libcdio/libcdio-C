@@ -1124,6 +1124,8 @@ _read_audio_sectors_cdrdao (void *user_data, void *data, lsn_t lsn,
       memcpy(p, buf, CDIO_CD_FRAMESIZE_RAW);
       p += CDIO_CD_FRAMESIZE_RAW;
     }
+    if (nblocks)
+      env->last_read_lsn = lsn + nblocks - 1;
     return DRIVER_OP_SUCCESS;
   }
 
@@ -1186,8 +1188,63 @@ _read_audio_sectors_sub_cdrdao (void *user_data, void *data, lsn_t lsn,
       _get_subq_cdrdao(buf + CDIO_CD_FRAMESIZE_RAW, p);
     }
     p += sub_size;
+    env->last_read_lsn = lsn + i;
   }
   return DRIVER_OP_SUCCESS;
+}
+
+/**
+   Returns the Q sub-channel position of the last audio sector read, as
+   READ SUB-CHANNEL does on a drive. Like a drive, it gives the last
+   position (mode 1) Q, going back past MCN and ISRC frames. Only RW_RAW
+   tracks have sub-channel data.
+ */
+static driver_return_code_t
+_audio_read_subchannel_cdrdao (void *p_user_data,
+			       cdio_subchannel_t *p_subchannel)
+{
+  const _img_private_t *env = p_user_data;
+  const track_info_t *this_track =
+    _get_data_track_cdrdao(env, env->last_read_lsn);
+  uint8_t buf[CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB];
+  uint8_t q[CDIO_CD_FRAMESIZE_SUB / 8];
+  lsn_t lsn;
+
+  if (!this_track || TRACK_FORMAT_AUDIO != this_track->track_format ||
+      IMAGE_SUBCHANNEL_RW_RAW != this_track->subchannel)
+    return DRIVER_OP_UNSUPPORTED;
+
+  for (lsn = env->last_read_lsn; lsn > env->last_read_lsn - 10; lsn--) {
+    driver_return_code_t ret;
+
+    this_track = _get_data_track_cdrdao(env, lsn);
+    if (!this_track || TRACK_FORMAT_AUDIO != this_track->track_format ||
+	IMAGE_SUBCHANNEL_RW_RAW != this_track->subchannel ||
+	this_track->blocksize != sizeof(buf))
+      break;
+
+    ret = _read_block_cdrdao(this_track, buf, lsn);
+    if (ret)
+      return ret;
+    _get_subq_cdrdao(buf + CDIO_CD_FRAMESIZE_RAW, q);
+    if (1 != (q[0] & 0x0f))
+      continue;
+
+    p_subchannel->format       = CDIO_SUBCHANNEL_CURRENT_POSITION;
+    p_subchannel->audio_status = CDIO_MMC_READ_SUB_ST_NO_STATUS;
+    p_subchannel->address      = q[0] & 0x0f;
+    p_subchannel->control      = q[0] >> 4;
+    p_subchannel->track        = cdio_from_bcd8(q[1]);
+    p_subchannel->index        = cdio_from_bcd8(q[2]);
+    p_subchannel->rel_addr.m   = q[3];
+    p_subchannel->rel_addr.s   = q[4];
+    p_subchannel->rel_addr.f   = q[5];
+    p_subchannel->abs_addr.m   = q[7];
+    p_subchannel->abs_addr.s   = q[8];
+    p_subchannel->abs_addr.f   = q[9];
+    return DRIVER_OP_SUCCESS;
+  }
+  return DRIVER_OP_ERROR;
 }
 
 /**
@@ -1466,6 +1523,7 @@ cdio_open_cdrdao (const char *psz_cue_name)
 
   memset( &_funcs, 0, sizeof(_funcs) );
 
+  _funcs.audio_read_subchannel = _audio_read_subchannel_cdrdao;
   _funcs.eject_media           = _eject_media_image;
   _funcs.free                  = _free_image;
   _funcs.get_arg               = _get_arg_image;

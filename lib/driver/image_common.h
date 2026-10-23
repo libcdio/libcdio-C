@@ -43,6 +43,8 @@ typedef struct {
   track_info_t  tocent[CDIO_CD_MAX_TRACKS+1]; /* entry info for each track
                                                  add 1 for leadout. */
   discmode_t    disc_mode;
+  lsn_t         last_read_lsn;  /* Last audio sector read, whose sub-channel
+                                   cdio_audio_read_subchannel() returns */
 
 #ifdef NEED_NERO_STRUCT
   /* Nero Specific stuff. Note: for the image_free to work, this *must*
