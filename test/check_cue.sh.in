@@ -16,7 +16,7 @@ fi
 
 . ${top_builddir}/test/check_common_fn
 
-CD_INFO=$abs_top_srcdir/src/cd-info
+CD_INFO=$top_builddir/src/cd-info
 if test ! -x $CD_INFO ; then
   exit 77
 fi
