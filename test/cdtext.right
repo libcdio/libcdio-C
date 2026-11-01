@@ -15,7 +15,7 @@ CD-TEXT for Track  1:
 	TITLE: Song of Joy
 	PERFORMER: Felix and The Purrs
 	SONGWRITER: Friedrich Schiller
-        COMPOSER: Ludwig van Beethoven
+	COMPOSER: Ludwig van Beethoven
 	MESSAGE: Fritz and Louie once were punks
 	ARRANGER: Tom Cat
 	ISRC: XYBLG1101234
@@ -23,9 +23,9 @@ CD-TEXT for Track  2:
 	TITLE: Humpty Dumpty
 	PERFORMER: Catwalk Beauties
 	SONGWRITER: Mother Goose
-        COMPOSER: unknown
+	COMPOSER: unknown
 	MESSAGE: Pluck the goose
-        ARRANGER: Tom Cat
+	ARRANGER: Tom Cat
 	ISRC: XYBLG1100005
 CD-TEXT for Track  3:
 	TITLE: Mee Owwww
@@ -61,7 +61,7 @@ CD-TEXT for Track  2:
 	SONGWRITER: Mutter Gans
 	COMPOSER: unbekannt
 	MESSAGE: Rupft die Gans
-        ARRANGER: Tom Cat
+	ARRANGER: Tom Cat
 	ISRC: XYBLG1100005
 CD-TEXT for Track  3:
 	TITLE: Mie auu

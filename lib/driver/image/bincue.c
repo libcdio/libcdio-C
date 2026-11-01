@@ -102,14 +102,6 @@ _init_bincue(_img_private_t *p_env)
 
   if (NULL == p_env->psz_cue_name) return false;
 
-  /* Read in CUE sheet. */
-  if ( !parse_cuefile(p_env, p_env->psz_cue_name) ) return false;
-
-  if (!(p_env->gen.data_source = cdio_stdio_new (p_env->gen.source_name))) {
-    cdio_warn ("init failed");
-    return false;
-  }
-
   /* Have to set init before calling get_disc_last_lsn_bincue() or we will
      get into infinite recursion calling passing right here.
    */
@@ -117,6 +109,14 @@ _init_bincue(_img_private_t *p_env)
   p_env->gen.i_first_track = 1;
   p_env->psz_mcn       = NULL;
   p_env->disc_mode     = CDIO_DISC_MODE_NO_INFO;
+
+  /* Read in CUE sheet. */
+  if ( !parse_cuefile(p_env, p_env->psz_cue_name) ) return false;
+
+  if (!(p_env->gen.data_source = cdio_stdio_new (p_env->gen.source_name))) {
+    cdio_warn ("init failed");
+    return false;
+  }
 
   lead_lsn = get_disc_last_lsn_bincue( (_img_private_t *) p_env);
 
