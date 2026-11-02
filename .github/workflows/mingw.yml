@@ -11,13 +11,15 @@ jobs:
         include:
           - { sys: mingw64, env: x86_64 }
           - { sys: mingw32, env: i686 }
+          - { sys: ucrt64,  env: ucrt-x86_64, exe: rufus_ucrt.exe }
 
     defaults:
       run:
         shell: msys2 {0}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
+
     - name: Setup
       uses: msys2/setup-msys2@v2
       with:
@@ -29,9 +31,11 @@ jobs:
           autotools
           texinfo
           help2man
+
     - name: Build
       run: |
         ./autogen.sh
         make -j4
+
     - name: Test
       run: make check
