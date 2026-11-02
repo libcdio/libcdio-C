@@ -829,8 +829,11 @@ _iso9660_recname_to_cstring(const char *src, size_t src_len,
     cdio_utf8_t *p_psz_out = NULL;
 
     if (cdio_charset_to_utf8(src, i_inlen, &p_psz_out, "UCS-2BE")) {
-      if (cpy_result != NULL)
-        strcpy(cpy_result, p_psz_out);
+      if (cpy_result != NULL) {
+	strncpy(cpy_result, p_psz_out, i_inlen);
+	if (strlen(p_psz_out) > i_inlen)
+	  cdio_warn("file name '%s' was truncated", p_psz_out);
+      }
       if (alloc_result != NULL)
         *alloc_result = p_psz_out;
       else
@@ -911,6 +914,7 @@ _iso9660_dir_to_statbuf (iso9660_dir_t *p_iso9660_dir,
   /* Test for gaps between extents. Important: Use previous .total_size */
   extent_lsn = from_733 (p_iso9660_dir->extent);
   if (p_stat->total_size > 0) {
+    cdio_utf8_t* p_psz_out = NULL;
     /* This is a follow-up extent. Check for a gap. */
     if (p_stat->lsn + p_stat->total_size / ISO_BLOCKSIZE != extent_lsn
 	|| p_stat->total_size % ISO_BLOCKSIZE) {
@@ -918,6 +922,15 @@ _iso9660_dir_to_statbuf (iso9660_dir_t *p_iso9660_dir,
       cdio_warn("Non-contiguous data extents with '%s'", p_stat->filename);
       goto fail;
     }
+    /* Extent name is different. Throw error. This also prevents the
+       p_stat->filename string copy further down from overflowing. */
+    if (!_iso9660_recname_to_cstring(&p_iso9660_dir->filename.str[1], i_fname,
+	&p_psz_out, NULL, u_joliet_level) || strcmp(p_psz_out, p_stat->filename)) {
+      cdio_warn("Data extent name '%s' does not match original name '%s'", p_psz_out, p_stat->filename);
+      free(p_psz_out);
+      goto fail;
+    }
+    free(p_psz_out);
   } else if (first_extent) {
     p_stat->lsn = extent_lsn;
   }
@@ -1663,7 +1676,7 @@ iso9660_ifs_readdir (iso9660_t *p_iso, const char psz_path[])
     }
 
   ret = iso9660_iso_seek_read (p_iso, _dirbuf, p_stat->lsn, blocks);
-  if (ret != dirbuf_len) 	  {
+  if (ret != dirbuf_len) {
     _cdio_list_free (retval, true, NULL);
     iso9660_stat_free(p_stat);
     free (_dirbuf);
