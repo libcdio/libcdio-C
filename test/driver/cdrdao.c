@@ -51,6 +51,66 @@
 #define NUM_GOOD_TOCS 17
 #define NUM_BAD_TOCS 10
 
+#define RW_RAW_SECTORS 14
+#define RW_RAW_BLOCKSIZE (CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB)
+
+/* Read the image of cdda-rw-raw.toc, opened from outside its directory */
+static int
+check_rw_raw(void)
+{
+  const char *toc_name = DATA_DIR "/cdda-rw-raw.toc";
+  static uint8_t image[RW_RAW_SECTORS * RW_RAW_BLOCKSIZE];
+  static uint8_t buf[RW_RAW_SECTORS * RW_RAW_BLOCKSIZE];
+  FILE *bin = fopen(DATA_DIR "/cdda-rw-raw.bin", "rb");
+  CdIo_t *p_cdio;
+  lsn_t lsn;
+  int ret = 0;
+
+  if (!bin || sizeof(image) != fread(image, 1, sizeof(image), bin)) {
+    fprintf(stderr, "Unable to read cdda-rw-raw.bin\n");
+    if (bin)
+      fclose(bin);
+    return 1;
+  }
+  fclose(bin);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    return 1;
+  }
+
+  if (2 != cdio_get_num_tracks(p_cdio) ||
+      0 != cdio_get_track_lsn(p_cdio, 1) ||
+      6 != cdio_get_track_pregap_lsn(p_cdio, 2) ||
+      8 != cdio_get_track_lsn(p_cdio, 2) ||
+      RW_RAW_SECTORS != cdio_get_track_lsn(p_cdio, CDIO_CDROM_LEADOUT_TRACK)) {
+    fprintf(stderr, "Incorrect: %s track positions.\n", toc_name);
+    ret = 1;
+    goto out;
+  }
+
+  /* Audio sectors leave out the sub-channel data */
+  if (DRIVER_OP_SUCCESS !=
+      cdio_read_audio_sectors(p_cdio, buf, 0, RW_RAW_SECTORS)) {
+    fprintf(stderr, "Incorrect: %s audio read failed.\n", toc_name);
+    ret = 1;
+    goto out;
+  }
+  for (lsn = 0; lsn < RW_RAW_SECTORS; lsn++) {
+    if (memcmp(buf + lsn * CDIO_CD_FRAMESIZE_RAW,
+	       image + lsn * RW_RAW_BLOCKSIZE, CDIO_CD_FRAMESIZE_RAW)) {
+      fprintf(stderr, "Incorrect: %s audio of LSN %d.\n", toc_name, lsn);
+      ret = 1;
+      goto out;
+    }
+  }
+
+ out:
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
 static int
 check_no_tracks(void)
 {
@@ -139,7 +199,7 @@ main(int argc, const char *argv[])
   char psz_tocfile[500];
   unsigned int verbose = (argc > 1);
 
-  if (check_no_tracks() || check_track_without_mode())
+  if (check_no_tracks() || check_track_without_mode() || check_rw_raw())
     ret = 1;
 
 #ifdef HAVE_CHDIR
