@@ -20,8 +20,11 @@ check_DATA = \
 	bad-tracknum-exceeded.cue \
 	bad-tracknum-exceeded.toc \
 	bad-tracknum-overflow.toc \
+	cdda-rw-raw.bin \
+	cdda-rw-raw.toc \
 	cdda.bin       \
 	cdda.cue       \
+	cdda.toc       \
 	cdda_4_5.bin   \
 	cdda_4_5.cue   \
 	cdimage-u2.iso \

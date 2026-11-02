@@ -22,7 +22,7 @@ fi
 cd $srcdir; src_dir=`pwd`
 for file in $src_dir/data/*.bin $src_dir/data/*.iso $src_dir/data/*.nrg ; do 
   case "$file" in
-  $src_dir/data/p1.nrg | $src_dir/data/p1.bin | $src_dir/data/cdda.bin | $src_dir/data/cdda_4_5.bin | $src_dir/data/cdtextfile.bin | $src_dir/data/cdda-mcn.nrg | $src_dir/data/svcdgs.nrg | $src_dir/data/cdtext.bin | $src_dir/data/udf102.iso | $src_dir/data/too-many-tracks.nrg )
+  $src_dir/data/p1.nrg | $src_dir/data/p1.bin | $src_dir/data/cdda.bin | $src_dir/data/cdda-rw-raw.bin | $src_dir/data/cdda_4_5.bin | $src_dir/data/cdtextfile.bin | $src_dir/data/cdda-mcn.nrg | $src_dir/data/svcdgs.nrg | $src_dir/data/cdtext.bin | $src_dir/data/udf102.iso | $src_dir/data/too-many-tracks.nrg )
     good_rc=1
     ;;
   *) 

@@ -40,6 +40,17 @@
 #include <cdio/sector.h>
 
 /**
+  Sub-channel data stored after each sector in a disc image.
+*/
+typedef enum {
+  IMAGE_SUBCHANNEL_NONE = 0,
+  IMAGE_SUBCHANNEL_RW,          /**< 96 bytes of packed R-W (cdrdao RW) */
+  IMAGE_SUBCHANNEL_RW_RAW       /**< 96 bytes of raw interleaved sub-channel
+                                     data (cdrdao RW_RAW). cdrdao read-cd
+                                     stores the drive's raw P-W data. */
+} image_subchannel_t;
+
+/**
   The universal format for information about a track for CD image readers
   It may be that some fields can be derived from other fields.
   Over time this structure may get cleaned up. Possibly this can be
@@ -78,6 +89,9 @@ typedef struct {
                                      This stuff may have error correction
                                      (EDC, or ECC).*/
   uint16_t       blocksize;     /**< total block size = start + size + end */
+  image_subchannel_t subchannel; /**< sub-channel data in endsize */
+  lba_t          data_lba;      /**< LBA of the sector stored at offset in
+                                     data_source, 0 if unknown */
 } track_info_t;
 
 

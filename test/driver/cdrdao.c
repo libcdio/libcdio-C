@@ -42,6 +42,7 @@
 
 #include <cdio/cdio.h>
 #include <cdio/logging.h>
+#include <cdio/mmc_ll_cmds.h>
 #include "helper.h"
 
 #ifndef DATA_DIR
@@ -50,6 +51,173 @@
 
 #define NUM_GOOD_TOCS 17
 #define NUM_BAD_TOCS 10
+
+#define RW_RAW_SECTORS 14
+#define RW_RAW_BLOCKSIZE (CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB)
+#define FORMATTED_Q_BLOCKSIZE (CDIO_CD_FRAMESIZE_RAW + 16)
+
+static uint8_t
+to_bcd(int i)
+{
+  return (uint8_t) ((i / 10) << 4 | i % 10);
+}
+
+/* Read the image of cdda-rw-raw.toc, opened from outside its directory */
+static int
+check_rw_raw(void)
+{
+  const char *toc_name = DATA_DIR "/cdda-rw-raw.toc";
+  static uint8_t image[RW_RAW_SECTORS * RW_RAW_BLOCKSIZE];
+  static uint8_t buf[RW_RAW_SECTORS * RW_RAW_BLOCKSIZE];
+  FILE *bin = fopen(DATA_DIR "/cdda-rw-raw.bin", "rb");
+  CdIo_t *p_cdio;
+  lsn_t lsn;
+  int ret = 0;
+
+  if (!bin || sizeof(image) != fread(image, 1, sizeof(image), bin)) {
+    fprintf(stderr, "Unable to read cdda-rw-raw.bin\n");
+    if (bin)
+      fclose(bin);
+    return 1;
+  }
+  fclose(bin);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    return 1;
+  }
+
+  if (2 != cdio_get_num_tracks(p_cdio) ||
+      0 != cdio_get_track_lsn(p_cdio, 1) ||
+      6 != cdio_get_track_pregap_lsn(p_cdio, 2) ||
+      8 != cdio_get_track_lsn(p_cdio, 2) ||
+      RW_RAW_SECTORS != cdio_get_track_lsn(p_cdio, CDIO_CDROM_LEADOUT_TRACK)) {
+    fprintf(stderr, "Incorrect: %s track positions.\n", toc_name);
+    ret = 1;
+    goto out;
+  }
+
+  /* Audio sectors leave out the sub-channel data */
+  if (DRIVER_OP_SUCCESS !=
+      cdio_read_audio_sectors(p_cdio, buf, 0, RW_RAW_SECTORS)) {
+    fprintf(stderr, "Incorrect: %s audio read failed.\n", toc_name);
+    ret = 1;
+    goto out;
+  }
+  for (lsn = 0; lsn < RW_RAW_SECTORS; lsn++) {
+    if (memcmp(buf + lsn * CDIO_CD_FRAMESIZE_RAW,
+	       image + lsn * RW_RAW_BLOCKSIZE, CDIO_CD_FRAMESIZE_RAW)) {
+      fprintf(stderr, "Incorrect: %s audio of LSN %d.\n", toc_name, lsn);
+      ret = 1;
+      goto out;
+    }
+  }
+
+  /* Raw P-W sub-channel data comes back as stored */
+  if (DRIVER_OP_SUCCESS !=
+      mmc_read_cd(p_cdio, buf, 0, 1, false, false, 0, true, false, 0, 1,
+		  RW_RAW_BLOCKSIZE, RW_RAW_SECTORS) ||
+      memcmp(buf, image, sizeof(image))) {
+    fprintf(stderr, "Incorrect: %s raw P-W read.\n", toc_name);
+    ret = 1;
+    goto out;
+  }
+
+  /* Formatted Q gives each sector's track, index and position */
+  if (DRIVER_OP_SUCCESS !=
+      mmc_read_cd(p_cdio, buf, 0, 1, false, false, 0, true, false, 0, 2,
+		  FORMATTED_Q_BLOCKSIZE, RW_RAW_SECTORS)) {
+    fprintf(stderr, "Incorrect: %s formatted Q read failed.\n", toc_name);
+    ret = 1;
+    goto out;
+  }
+  for (lsn = 0; lsn < RW_RAW_SECTORS; lsn++) {
+    const uint8_t *q =
+      buf + lsn * FORMATTED_Q_BLOCKSIZE + CDIO_CD_FRAMESIZE_RAW;
+    const lba_t lba = cdio_lsn_to_lba(lsn);
+    const uint8_t track = lsn < 6 ? 1 : 2;
+    const uint8_t index = lsn == 6 || lsn == 7 ? 0 : 1;
+
+    if (0x01 != q[0] || to_bcd(track) != q[1] || to_bcd(index) != q[2] ||
+	to_bcd(lba / CDIO_CD_FRAMES_PER_MIN) != q[7] ||
+	to_bcd(lba / CDIO_CD_FRAMES_PER_SEC % CDIO_CD_SECS_PER_MIN) != q[8] ||
+	to_bcd(lba % CDIO_CD_FRAMES_PER_SEC) != q[9] ||
+	q[12] || q[13] || q[14] || q[15]) {
+      fprintf(stderr, "Incorrect: %s formatted Q of LSN %d.\n",
+	      toc_name, lsn);
+      ret = 1;
+      goto out;
+    }
+  }
+
+  /* The sub-channel is that of the last sector read: in the pregap of
+     track 2, then after its index 1 */
+  for (lsn = 7; lsn <= 9; lsn += 2) {
+    cdio_subchannel_t sub;
+    const lba_t lba = cdio_lsn_to_lba(lsn);
+
+    if (DRIVER_OP_SUCCESS != cdio_read_audio_sectors(p_cdio, buf, lsn, 1) ||
+	DRIVER_OP_SUCCESS != cdio_audio_read_subchannel(p_cdio, &sub) ||
+	1 != sub.address || 0 != sub.control || 2 != sub.track ||
+	(lsn < 8 ? 0 : 1) != sub.index ||
+	to_bcd(lba / CDIO_CD_FRAMES_PER_MIN) != sub.abs_addr.m ||
+	to_bcd(lba / CDIO_CD_FRAMES_PER_SEC % CDIO_CD_SECS_PER_MIN) !=
+	sub.abs_addr.s ||
+	to_bcd(lba % CDIO_CD_FRAMES_PER_SEC) != sub.abs_addr.f) {
+      fprintf(stderr, "Incorrect: %s sub-channel after reading LSN %d.\n",
+	      toc_name, lsn);
+      ret = 1;
+      goto out;
+    }
+  }
+
+ out:
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
+/* READ CD works on an image without sub-channel data, but only without
+   sub-channel data, and there is no sub-channel position */
+static int
+check_no_subchannel(void)
+{
+  const char *toc_name = DATA_DIR "/cdda.toc";
+  static uint8_t audio[CDIO_CD_FRAMESIZE_RAW];
+  static uint8_t buf[RW_RAW_BLOCKSIZE];
+  CdIo_t *p_cdio = cdio_open_cdrdao(toc_name);
+  int ret = 0;
+
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    return 1;
+  }
+
+  if (DRIVER_OP_SUCCESS != cdio_read_audio_sectors(p_cdio, audio, 0, 1) ||
+      DRIVER_OP_SUCCESS !=
+      mmc_read_cd(p_cdio, buf, 0, 1, false, false, 0, true, false, 0, 0,
+		  CDIO_CD_FRAMESIZE_RAW, 1) ||
+      memcmp(buf, audio, sizeof(audio))) {
+    fprintf(stderr, "Incorrect: %s READ CD without sub-channel.\n",
+	    toc_name);
+    ret = 1;
+  } else if (DRIVER_OP_UNSUPPORTED !=
+	     mmc_read_cd(p_cdio, buf, 0, 1, false, false, 0, true, false, 0, 1,
+			 RW_RAW_BLOCKSIZE, 1)) {
+    fprintf(stderr, "Incorrect: %s READ CD with sub-channel.\n", toc_name);
+    ret = 1;
+  } else {
+    cdio_subchannel_t sub;
+
+    if (DRIVER_OP_UNSUPPORTED != cdio_audio_read_subchannel(p_cdio, &sub)) {
+      fprintf(stderr, "Incorrect: %s sub-channel position.\n", toc_name);
+      ret = 1;
+    }
+  }
+
+  cdio_destroy(p_cdio);
+  return ret;
+}
 
 static int
 check_no_tracks(void)
@@ -139,7 +307,8 @@ main(int argc, const char *argv[])
   char psz_tocfile[500];
   unsigned int verbose = (argc > 1);
 
-  if (check_no_tracks() || check_track_without_mode())
+  if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
+      check_no_subchannel())
     ret = 1;
 
 #ifdef HAVE_CHDIR
