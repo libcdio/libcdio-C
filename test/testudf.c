@@ -151,6 +151,45 @@ check_logvol_id_length(uint8_t comp_id, const char *psz_expected)
   return rc;
 }
 
+/* udf_stamp_to_time() must reject a month or day out of range */
+static int
+check_bad_timestamp(void)
+{
+  static const uint8_t bad[][2] = {
+    /* month, day */
+    {  0,  1 },
+    { 13,  1 },
+    { 255, 1 },
+    {  1,  0 },
+    {  1, 32 },
+    {  1, 255 },
+  };
+  udf_timestamp_t stamp;
+  time_t t;
+  long int usec;
+  unsigned int i;
+
+  memset(&stamp, 0, sizeof(stamp));
+  stamp.year = 2000;
+  stamp.month = 2;
+  stamp.day = 29;
+  if (!udf_stamp_to_time(&t, &usec, stamp) || t != 951782400) {
+    fprintf(stderr, "Unexpected time for a valid UDF timestamp\n");
+    return 1;
+  }
+
+  for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    stamp.month = bad[i][0];
+    stamp.day = bad[i][1];
+    if (udf_stamp_to_time(&t, &usec, stamp) != NULL || t != -1) {
+      fprintf(stderr, "UDF timestamp with month %u, day %u accepted\n",
+              bad[i][0], bad[i][1]);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -207,6 +246,12 @@ main(int argc, const char *argv[])
     goto exit;
   }
   printf("-- Good! Oversized logical volume ID length is bounded\n");
+
+  if (check_bad_timestamp()) {
+    rc=7;
+    goto exit;
+  }
+  printf("-- Good! Invalid UDF timestamps are rejected\n");
 
  exit:
   if (p_udf_root != NULL)
