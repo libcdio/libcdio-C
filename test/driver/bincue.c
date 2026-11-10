@@ -95,6 +95,45 @@ check_file_before_first_track(void)
   return 0;
 }
 
+/* BIN/CUE images have no sub-channel data and the driver can't run MMC
+   commands, so cdio_read_audio_sectors_sub() only reads without it */
+static int
+check_read_audio_sectors_sub(void)
+{
+  static uint8_t audio[2 * CDIO_CD_FRAMESIZE_RAW];
+  static uint8_t buf[2 * (CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB)];
+  CdIo_t *p_cdio = cdio_open_bincue(DATA_DIR "/cdda.cue");
+  int ret = 0;
+
+  if (!p_cdio) {
+    printf("Can't open cdda.cue\n");
+    return 1;
+  }
+
+  if (DRIVER_OP_SUCCESS != cdio_read_audio_sectors(p_cdio, audio, 0, 2) ||
+      DRIVER_OP_SUCCESS !=
+      cdio_read_audio_sectors_sub(p_cdio, buf, 0, CDIO_READ_SUB_NONE, 2) ||
+      memcmp(buf, audio, sizeof(audio))) {
+    printf("cdda.cue read without sub-channel doesn't match the audio\n");
+    ret = 1;
+  }
+  if (DRIVER_OP_UNSUPPORTED !=
+      cdio_read_audio_sectors_sub(p_cdio, buf, 0, CDIO_READ_SUB_PW_RAW, 2) ||
+      DRIVER_OP_UNSUPPORTED !=
+      cdio_read_audio_sectors_sub(p_cdio, buf, 0, CDIO_READ_SUB_Q, 2)) {
+    printf("cdda.cue read with sub-channel isn't unsupported\n");
+    ret = 1;
+  }
+  if (DRIVER_OP_BAD_PARAMETER !=
+      cdio_read_audio_sectors_sub(p_cdio, buf, 0, (cdio_read_sub_t) 3, 1)) {
+    printf("cdda.cue read with an invalid sub-channel isn't rejected\n");
+    ret = 1;
+  }
+
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
 static int
 check_no_tracks(void)
 {
@@ -173,6 +212,8 @@ main(int argc, const char *argv[])
   if (check_no_tracks())
     ret = 1;
   if (check_file_before_first_track())
+    ret = 1;
+  if (check_read_audio_sectors_sub())
     ret = 1;
   if (check_mode2_seek("mode2-2048.cue", "MODE2/2048")
       || check_mode2_seek("mode2-2324.cue", "MODE2/2324"))
