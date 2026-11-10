@@ -406,7 +406,9 @@ parse_nrg (_img_private_t *p_env, const char *psz_nrg_name,
 	      return false;
 	    }
 
-	    for (idx = 2; idx < entries; idx += 2, i++) {
+	    /* Each track uses a pair of entries; an unpaired last entry
+	       is ignored, as in the CUES loop above. */
+	    for (idx = 2; idx + 1 < entries; idx += 2, i++) {
 	      lsn_t sec_count;
 	      int cdte_format = _entries[idx].addr_ctrl >> 4;
 	      int cdte_ctrl   = _entries[idx].type >> 4;
