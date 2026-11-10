@@ -501,6 +501,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
+	      cd->tocent[i_track].blocksize    = M2RAW_SECTOR_SIZE;
 	      cd->tocent[i_track].datastart = CDIO_CD_SYNC_SIZE
 		+ CDIO_CD_HEADER_SIZE;
 	      cd->tocent[i_track].datasize = M2RAW_SECTOR_SIZE;
@@ -525,6 +526,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2_FORM1", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track+1].track_format = TRACK_FORMAT_XA;
+	      cd->tocent[i_track].blocksize = CDIO_CD_FRAMESIZE;
 	      cd->tocent[i_track].datastart = CDIO_CD_SYNC_SIZE
 		+ CDIO_CD_HEADER_SIZE;
 	      cd->tocent[i_track].datasize  = CDIO_CD_FRAMESIZE_RAW;
@@ -549,6 +551,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2_FORM2", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
+	      cd->tocent[i_track].blocksize    = M2F2_SECTOR_SIZE;
 	      cd->tocent[i_track].datastart    = CDIO_CD_SYNC_SIZE
 		+ CDIO_CD_HEADER_SIZE + CDIO_CD_SUBHEADER_SIZE;
 	      cd->tocent[i_track].datasize     = CDIO_CD_FRAMESIZE;

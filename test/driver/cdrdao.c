@@ -280,6 +280,74 @@ check_track_without_mode(void)
   return 0;
 }
 
+/* Create a file of size zero bytes in the current directory. TOC files
+   written by the tests refer to their data files by a relative name: an
+   absolute DATA_DIR may start with a drive letter, which file names in a
+   TOC can't. Returns 0 if no error. */
+static int
+write_zeros(const char *psz_name, long size)
+{
+  FILE *fp = fopen(psz_name, "wb");
+  long i;
+
+  if (!fp) {
+    fprintf(stderr, "Unable to create %s\n", psz_name);
+    return 1;
+  }
+  for (i = 0; i < size; i++)
+    fputc(0, fp);
+  if (fclose(fp)) {
+    fprintf(stderr, "Unable to write %s\n", psz_name);
+    remove(psz_name);
+    return 1;
+  }
+  return 0;
+}
+
+/* A DATAFILE without a length takes up the rest of its file, which is
+   counted in sectors of the track mode's size in the file. */
+static int
+check_datafile_mode(const char *psz_mode, unsigned int blocksize)
+{
+  const char *toc_name = "cdrdao-datafile-mode.toc";
+  const char *bin_name = "cdrdao-datafile-mode.bin";
+  /* Not a whole number of sectors of any size */
+  const long size = 100 * CDIO_CD_FRAMESIZE_RAW + 1000;
+  FILE *toc;
+  CdIo_t *p_cdio;
+  unsigned int sec_count;
+  int ret = 1;
+
+  if (write_zeros(bin_name, size))
+    return 1;
+  toc = fopen(toc_name, "w");
+  if (!toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  fprintf(toc, "CD_ROM_XA\nTRACK %s\nDATAFILE \"%s\"\n", psz_mode, bin_name);
+  fclose(toc);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Can't open a %s DATAFILE track\n", psz_mode);
+    remove(bin_name);
+    return 1;
+  }
+  /* Round up a partial last sector */
+  sec_count = cdio_get_track_sec_count(p_cdio, 1);
+  if (sec_count == (size + blocksize - 1) / blocksize)
+    ret = 0;
+  else
+    fprintf(stderr, "%s DATAFILE track has %u sectors, not %lu\n", psz_mode,
+            sec_count, (size + blocksize - 1) / blocksize);
+  cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -323,6 +391,10 @@ main(int argc, const char *argv[])
 
   if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
       check_no_subchannel())
+    ret = 1;
+  if (check_datafile_mode("MODE2", 2336)
+      || check_datafile_mode("MODE2_FORM1", 2048)
+      || check_datafile_mode("MODE2_FORM2", 2324))
     ret = 1;
 
 #ifdef HAVE_CHDIR
