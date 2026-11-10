@@ -1091,6 +1091,54 @@ read_audio_sectors_osx (void *user_data, void *p_data, lsn_t lsn,
 }
 
 /**
+   Reads audio sectors from CD device into p_data starting from lsn,
+   each followed by the sub-channel data selected by i_sub. MMC
+   commands need exclusive access to the drive on macOS, so this reads
+   with DKIOCCDREAD instead. Returns 0 if no error.
+ */
+static driver_return_code_t
+read_audio_sectors_sub_osx (void *user_data, void *p_data, lsn_t lsn,
+                            cdio_read_sub_t i_sub, unsigned int i_blocks)
+{
+  _img_private_t *env = user_data;
+  dk_cd_read_t cd_read;
+  uint32_t i_blocksize;
+
+  memset( &cd_read, 0, sizeof(cd_read) );
+
+  switch (i_sub) {
+  case CDIO_READ_SUB_NONE:
+    cd_read.sectorArea = kCDSectorAreaUser;
+    i_blocksize = kCDSectorSizeCDDA;
+    break;
+  case CDIO_READ_SUB_PW_RAW:
+    cd_read.sectorArea = kCDSectorAreaUser | kCDSectorAreaSubChannel;
+    i_blocksize = kCDSectorSizeCDDA + CDIO_CD_FRAMESIZE_SUB;
+    break;
+  case CDIO_READ_SUB_Q:
+    cd_read.sectorArea = kCDSectorAreaUser | kCDSectorAreaSubChannelQ;
+    i_blocksize = kCDSectorSizeCDDA + 16;
+    break;
+  default:
+    return DRIVER_OP_BAD_PARAMETER;
+  }
+
+  cd_read.offset       = (uint64_t) lsn * i_blocksize;
+  cd_read.sectorType   = kCDSectorTypeCDDA;
+
+  cd_read.buffer       = p_data;
+  cd_read.bufferLength = i_blocksize * i_blocks;
+
+  if( ioctl( env->gen.fd, DKIOCCDREAD, &cd_read ) == -1 )
+  {
+    cdio_info( "could not read block %d\n%s", lsn,
+               strerror(errno));
+    return ENOTTY == errno ? DRIVER_OP_UNSUPPORTED : DRIVER_OP_ERROR;
+  }
+  return DRIVER_OP_SUCCESS;
+}
+
+/**
    Reads a single mode2 sector from cd device into p_data starting
    from lsn. Returns 0 if no error.
  */
@@ -2060,6 +2108,7 @@ cdio_open_osx (const char *psz_orig_source)
     .lseek                 = cdio_generic_lseek,
     .read                  = cdio_generic_read,
     .read_audio_sectors    = read_audio_sectors_osx,
+    .read_audio_sectors_sub = read_audio_sectors_sub_osx,
     .read_data_sectors     = read_data_sectors_osx,
     .read_mode1_sector     = read_mode1_sector_osx,
     .read_mode1_sectors    = read_mode1_sectors_osx,

@@ -383,6 +383,16 @@ extern "C" {
                                 unsigned int i_blocks );
 
     /**
+      Reads audio sectors from cd device into buf starting from lsn,
+      each followed by the sub-channel data selected by i_sub, as
+      cdio_read_audio_sectors_sub() describes. Drivers without it read
+      with MMC READ CD. Returns 0 if no error.
+    */
+    driver_return_code_t (*read_audio_sectors_sub)
+         ( void *p_env, void *p_buf, lsn_t i_lsn, cdio_read_sub_t i_sub,
+           unsigned int i_blocks );
+
+    /**
       Read a data sector
 
       @param p_env environment to read from
