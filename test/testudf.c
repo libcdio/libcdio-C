@@ -50,6 +50,107 @@
 #define EXPECTED_NAME    "FéжΘvrier"
 #define EXPECTED_LENGTH  10
 
+/* Copy UDF_IMAGE to a temporary file, with the length byte of every
+   Logical Volume Descriptor's identifier set to 0xff and its compression
+   ID set to comp_id, and get the logical volume ID from it. The length
+   must be kept within the field. If psz_expected isn't NULL, the ID must
+   match it. */
+static int
+check_logvol_id_length(uint8_t comp_id, const char *psz_expected)
+{
+  char volume_id[192];
+#ifdef HAVE_MKSTEMP
+  char psz_tmp[] = "libcdio-udf-XXXXXX";
+  int fd;
+#else
+  const char *psz_tmp;
+#endif
+  FILE *fp;
+  uint8_t *image;
+  long size, lba;
+  unsigned int patched = 0;
+  udf_t *p_udf;
+  udf_dirent_t *p_udf_root;
+  int len, rc = 1;
+
+  fp = fopen(UDF_IMAGE, "rb");
+  if (!fp)
+    return 1;
+  if (fseek(fp, 0, SEEK_END) || (size = ftell(fp)) <= 0
+      || fseek(fp, 0, SEEK_SET)) {
+    fclose(fp);
+    return 1;
+  }
+  image = malloc(size);
+  if (!image || fread(image, 1, size, fp) != (size_t) size) {
+    free(image);
+    fclose(fp);
+    return 1;
+  }
+  fclose(fp);
+
+  for (lba = 0; (lba + 1) * UDF_BLOCKSIZE <= size; lba++) {
+    logical_vol_desc_t *p_lvd = (logical_vol_desc_t *)
+      (image + lba * UDF_BLOCKSIZE);
+    const uint8_t *tag = (const uint8_t *) &p_lvd->tag;
+
+    if (tag[0] == TAGID_LOGVOL && tag[1] == 0
+        && (tag[12] | tag[13] << 8 | tag[14] << 16
+            | (uint32_t) tag[15] << 24) == (uint32_t) lba) {
+      p_lvd->logvol_id[0] = (char) comp_id;
+      p_lvd->logvol_id[sizeof(p_lvd->logvol_id)-1] = (char) 0xff;
+      patched++;
+    }
+  }
+  if (!patched) {
+    fprintf(stderr, "No Logical Volume Descriptor in %s\n", UDF_IMAGE);
+    free(image);
+    return 1;
+  }
+
+#ifdef HAVE_MKSTEMP
+  fd = mkstemp(psz_tmp);
+  fp = fd < 0 ? NULL : fdopen(fd, "wb");
+  if (!fp && fd >= 0) {
+    close(fd);
+    remove(psz_tmp);
+  }
+#else
+  psz_tmp = tmpnam(NULL);
+  fp = psz_tmp ? fopen(psz_tmp, "wb") : NULL;
+#endif
+  if (!fp) {
+    free(image);
+    return 1;
+  }
+  if (fwrite(image, 1, size, fp) != (size_t) size) {
+    fclose(fp);
+    remove(psz_tmp);
+    free(image);
+    return 1;
+  }
+  fclose(fp);
+  free(image);
+
+  p_udf = udf_open(psz_tmp);
+  if (p_udf) {
+    p_udf_root = udf_get_root(p_udf, true, 0);
+    if (p_udf_root) {
+      len = udf_get_logical_volume_id(p_udf, volume_id, sizeof(volume_id));
+      if (len <= 0 || len > 3 * 128)
+        fprintf(stderr, "Unexpected logical volume ID length %d\n", len);
+      else if (psz_expected && strcmp(psz_expected, volume_id) != 0)
+        fprintf(stderr, "Unexpected logical volume ID '%s'\n", volume_id);
+      else
+        rc = 0;
+      udf_dirent_free(p_udf_root);
+    }
+    udf_close(p_udf);
+  }
+  remove(psz_tmp);
+  return rc;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -98,6 +199,14 @@ main(int argc, const char *argv[])
     goto exit;
   }
   printf("-- Good! File length matches expected length\n");
+
+  if (check_logvol_id_length(16, EXPECTED_NAME)
+      || check_logvol_id_length(8, NULL)) {
+    fprintf(stderr, "Mishandled an oversized logical volume ID length\n");
+    rc=6;
+    goto exit;
+  }
+  printf("-- Good! Oversized logical volume ID length is bounded\n");
 
  exit:
   if (p_udf_root != NULL)
