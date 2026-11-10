@@ -712,8 +712,14 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	if (i_track < 0)
 	  goto not_in_global_section;
         if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
+	      lba_t lba = cdio_mmssff_to_lba (psz_field);
+	      if (CDIO_INVALID_LBA == lba) {
+		cdio_log(log_level, "%s line %d: invalid MSF string %s",
+			 psz_cue_name, i_line, psz_field);
+		goto err_exit;
+	      }
 	      if (NULL != cd)
-		  cd->tocent[i_track].silence = cdio_mmssff_to_lba (psz_field);
+		  cd->tocent[i_track].silence = lba;
 	  } else {
 	      goto format_error;
 	  }
@@ -909,14 +915,20 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	if (0 <= i_track) {
 	  if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
 	    /* todo: line is too long! */
+	    lba_t lba = cdio_mmssff_to_lba (psz_field);
+	    if (CDIO_INVALID_LBA == lba) {
+	      cdio_log(log_level, "%s line %d: invalid MSF string %s",
+		       psz_cue_name, i_line, psz_field);
+	      goto err_exit;
+	    }
 	    if (NULL != cd) {
 	      cd->tocent[i_track].pregap = cd->tocent[i_track].start_lba;
-	      cd->tocent[i_track].start_lba += cdio_mmssff_to_lba (psz_field);
+	      cd->tocent[i_track].start_lba += lba;
 	      cdio_lba_to_msf(cd->tocent[i_track].start_lba,
 			      &(cd->tocent[i_track].start_msf));
 	      /* Unknown lengths stay unknown */
 	      if (cd->tocent[i_track].sec_count)
-		cd->tocent[i_track].sec_count -= cdio_mmssff_to_lba (psz_field);
+		cd->tocent[i_track].sec_count -= lba;
 	    }
 	  }
 
@@ -931,8 +943,14 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
       } else if (0 == strcmp ("PREGAP", psz_keyword)) {
 	if (0 <= i_track) {
 	  if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
+	    lba_t lba = cdio_mmssff_to_lba (psz_field);
+	    if (CDIO_INVALID_LBA == lba) {
+	      cdio_log(log_level, "%s line %d: invalid MSF string %s",
+		       psz_cue_name, i_line, psz_field);
+	      goto err_exit;
+	    }
 	    if (NULL != cd)
-	      cd->tocent[i_track].pregap = cdio_mmssff_to_lba (psz_field);
+	      cd->tocent[i_track].pregap = lba;
 	  } else {
 	    goto format_error;
 	  }
