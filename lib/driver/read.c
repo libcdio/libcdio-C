@@ -31,6 +31,7 @@
 
 #include <cdio/cdio.h>
 #include <cdio/logging.h>
+#include <cdio/mmc_ll_cmds.h>
 #include "cdio_private.h"
 #include "cdio_assert.h"
 
@@ -143,6 +144,53 @@ cdio_read_audio_sectors (const CdIo_t *p_cdio, void *p_buf, lsn_t i_lsn,
                                             i_blocks);
   }
   return DRIVER_OP_UNSUPPORTED;
+}
+
+/**
+  Reads audio sectors from cd device into data starting from lsn,
+  each followed by the sub-channel data selected by i_sub. Returns
+  DRIVER_OP_SUCCESS if no error.
+*/
+driver_return_code_t
+cdio_read_audio_sectors_sub (const CdIo_t *p_cdio, void *p_buf, lsn_t i_lsn,
+                             cdio_read_sub_t i_sub, uint32_t i_blocks)
+{
+  uint16_t i_blocksize;
+
+  check_lsn_blocks(i_lsn, i_blocks);
+
+  switch (i_sub) {
+  case CDIO_READ_SUB_NONE:
+    i_blocksize = CDIO_CD_FRAMESIZE_RAW;
+    break;
+  case CDIO_READ_SUB_PW_RAW:
+    i_blocksize = CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB;
+    break;
+  case CDIO_READ_SUB_Q:
+    i_blocksize = CDIO_CD_FRAMESIZE_RAW + 16;
+    break;
+  default:
+    return DRIVER_OP_BAD_PARAMETER;
+  }
+
+  if (0 == i_blocks) return DRIVER_OP_SUCCESS;
+
+  cdio_debug("Reading audio sector(s) lsn %u for %d blocks, sub-channel %d",
+             i_lsn, i_blocks, i_sub);
+
+  if (p_cdio->op.read_audio_sectors_sub)
+    return (p_cdio->op.read_audio_sectors_sub) (p_cdio->env, p_buf, i_lsn,
+                                                i_sub, i_blocks);
+
+  if (CDIO_READ_SUB_NONE == i_sub)
+    return cdio_read_audio_sectors (p_cdio, p_buf, i_lsn, i_blocks);
+
+  /* READ CD of CD-DA sectors, user data only. i_sub is the
+     sub-channel selection of mmc_read_cd(): 1 is raw P-W, 2 is
+     formatted Q. This is unsupported if the driver can't run MMC
+     commands. */
+  return mmc_read_cd (p_cdio, p_buf, i_lsn, 1, false, false, 0, true, false,
+                      0, (uint8_t) i_sub, i_blocksize, i_blocks);
 }
 
 /**

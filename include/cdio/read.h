@@ -39,6 +39,18 @@ extern "C" {
     CDIO_READ_MODE_M2F2    /**< Mode 2 Form 2 */
   } cdio_read_mode_t;
 
+  /** The sub-channel data cdio_read_audio_sectors_sub() reads after
+      each audio sector. */
+  typedef enum {
+    CDIO_READ_SUB_NONE   = 0, /**< none: CDIO_CD_FRAMESIZE_RAW bytes */
+    CDIO_READ_SUB_PW_RAW = 1, /**< 96 bytes of raw interleaved P-W:
+                                 CDIO_CD_FRAMESIZE_RAW +
+                                 CDIO_CD_FRAMESIZE_SUB bytes */
+    CDIO_READ_SUB_Q      = 2  /**< the 12 Q bytes with their CRC, padded
+                                 to 16 bytes as MMC READ CD returns them:
+                                 CDIO_CD_FRAMESIZE_RAW + 16 bytes */
+  } cdio_read_sub_t;
+
   /**
     Reposition read offset
     Similar to (if not the same as) libc's fseek()
@@ -91,6 +103,30 @@ extern "C" {
   driver_return_code_t cdio_read_audio_sectors (const CdIo_t *p_cdio,
                                                 void *p_buf, lsn_t i_lsn,
                                                 uint32_t i_blocks);
+
+  /**
+    Reads audio sectors, each followed by its sub-channel data
+
+    @param p_cdio object to read from
+    @param p_buf place to read data into. The caller should make sure
+                 this location can store i_blocks sectors of the size
+                 given for i_sub in cdio_read_sub_t.
+    @param i_lsn sector to read
+    @param i_sub sub-channel data to read with each sector
+    @param i_blocks number of sectors to read
+
+    @return DRIVER_OP_SUCCESS (0) if no error, DRIVER_OP_UNSUPPORTED
+    if the driver, drive or image can't return this sub-channel data,
+    or another driver_return_code_t on error.
+
+    Drivers that can run MMC commands read with READ CD. Disc images
+    only have sub-channel data if it was stored in the image, as
+    cdrdao read-cd --read-subchan rw_raw does.
+  */
+  driver_return_code_t cdio_read_audio_sectors_sub (const CdIo_t *p_cdio,
+                                                    void *p_buf, lsn_t i_lsn,
+                                                    cdio_read_sub_t i_sub,
+                                                    uint32_t i_blocks);
 
   /**
     Read data sectors

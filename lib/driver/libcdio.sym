@@ -156,6 +156,7 @@ cdio_os_driver
 cdio_read
 cdio_read_audio_sector
 cdio_read_audio_sectors
+cdio_read_audio_sectors_sub
 cdio_read_data_sectors
 cdio_read_mode1_sector
 cdio_read_mode1_sectors
