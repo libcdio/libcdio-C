@@ -1,0 +1,20 @@
+// Two audio tracks with raw P-W sub-channel data after each sector, as
+// written by cdrdao read-cd --read-subchan rw_raw. Track 2 has a two
+// sector pregap. Sectors hold (lsn * 31 + byte) & 0xff, the Q sub-channel
+// gives each sector's track, index and position.
+CD_DA
+
+// Track 1
+TRACK AUDIO RW_RAW
+NO COPY
+NO PRE_EMPHASIS
+TWO_CHANNEL_AUDIO
+DATAFILE "cdda-rw-raw.bin" 00:00:06 // length in bytes: 14688
+
+// Track 2
+TRACK AUDIO RW_RAW
+NO COPY
+NO PRE_EMPHASIS
+TWO_CHANNEL_AUDIO
+DATAFILE "cdda-rw-raw.bin" #14688 00:00:08 // length in bytes: 19584
+START 00:00:02

@@ -636,13 +636,24 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    goto err_exit;
 	  }
 	if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
-	  /* \todo: set sub-channel-mode */
-#ifdef TODO
+	  /* <sub-channel-mode>: 96 bytes follow each sector in the file */
+	  image_subchannel_t subchannel;
 	  if (0 == strcmp ("RW", psz_field))
-	    ;
+	    subchannel = IMAGE_SUBCHANNEL_RW;
 	  else if (0 == strcmp ("RW_RAW", psz_field))
-	    ;
-#endif
+	    subchannel = IMAGE_SUBCHANNEL_RW_RAW;
+	  else {
+	    cdio_log(log_level, "%s line %d after TRACK:",
+		     psz_cue_name, i_line);
+	    cdio_log(log_level, "'%s' not a valid sub-channel mode.",
+		     psz_field);
+	    goto err_exit;
+	  }
+	  if (NULL != cd) {
+	    cd->tocent[i_track].subchannel = subchannel;
+	    cd->tocent[i_track].endsize   += CDIO_CD_FRAMESIZE_SUB;
+	    cd->tocent[i_track].blocksize += CDIO_CD_FRAMESIZE_SUB;
+	  }
 	}
 	if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
 	  goto format_error;
@@ -717,30 +728,31 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	if (0 <= i_track) {
 	  if (NULL != (psz_field = strtok_r(NULL, "\"\t\n\r", &saveptr))) {
 	    /* Handle "<filename>" */
+	    char *psz_dirname = cdio_dirname(psz_cue_name);
+	    char *psz_filename = cdio_abspath(psz_dirname, psz_field);
+	    free(psz_dirname);
 	    if (cd) {
-	      char *psz_dirname = cdio_dirname(psz_cue_name);
-	      char *psz_filename = cdio_abspath(psz_dirname, psz_field);
 	      cd->tocent[i_track].filename = strdup (psz_filename);
-	      free(psz_filename);
-	      free(psz_dirname);
 	      /* To do: do something about reusing existing files. */
-	      if (!(cd->tocent[i_track].data_source = cdio_stdio_new (psz_field))) {
+	      if (!(cd->tocent[i_track].data_source = cdio_stdio_new (psz_filename))) {
 		cdio_log (log_level,
 			  "%s line %d: can't open file `%s' for reading",
 			   psz_cue_name, i_line, psz_field);
+		free(psz_filename);
 		goto err_exit;
 	      }
 	    } else {
-	      CdioDataSource_t *s = cdio_stdio_new (psz_field);
+	      CdioDataSource_t *s = cdio_stdio_new (psz_filename);
 	      if (!s) {
 		cdio_log (log_level,
 			  "%s line %d: can't open file `%s' for reading",
 			  psz_cue_name, i_line, psz_field);
-		cdio_stdio_destroy (s);
+		free(psz_filename);
 		goto err_exit;
 	      }
 	      cdio_stdio_destroy (s);
 	    }
+	    free(psz_filename);
 	  }
 
 	  if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
@@ -788,7 +800,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  goto not_in_global_section;
 	}
 
-	/* DATAFILE "<filename>" #byte-offset <start-msf> */
+	/* DATAFILE "<filename>" [#byte-offset] [<length>] */
       } else if (0 == strcmp ("DATAFILE", psz_keyword)) {
 	if (0 <= i_track) {
 	  if (NULL != (psz_field = strtok_r(NULL, "\"\t\n\r", &saveptr))) {
@@ -798,7 +810,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    if (cd) {
 	      cd->tocent[i_track].filename = strdup(psz_filename);
 	      /* To do: do something about reusing existing files. */
-	      if (!(cd->tocent[i_track].data_source = cdio_stdio_new (psz_field))) {
+	      if (!(cd->tocent[i_track].data_source = cdio_stdio_new (psz_filename))) {
 		cdio_log (log_level,
 			  "%s line %d: can't open file `%s' for reading",
 			  psz_cue_name, i_line, psz_field);
@@ -845,37 +857,38 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    }
 	  }
 	  if (psz_field) {
-	    /* Handle start-msf */
+	    /* Handle <length> */
 	    lba_t lba = cdio_mmssff_to_lba (psz_field);
 	    if (CDIO_INVALID_LBA == lba) {
 	      cdio_log(log_level, "%s line %d: invalid MSF string %s",
 		       psz_cue_name, i_line, psz_field);
 	      goto err_exit;
 	    }
-	    if (cd) {
-	      cd->tocent[i_track].start_lba = lba;
-	      cdio_lba_to_msf(cd->tocent[i_track].start_lba,
-			      &(cd->tocent[i_track].start_msf));
-	    }
-	  } else {
-	    /* No start-msf. */
-	    if (cd) {
-	      if (i_track) {
-		uint16_t i_blocksize = cd->tocent[i_track-1].blocksize;
-		off_t i_size      =
-		  cdio_stream_stat(cd->tocent[i_track-1].data_source);
+	    if (cd)
+	      cd->tocent[i_track].sec_count = lba;
+	  }
+	  if (cd) {
+	    /* The track starts where the previous one ends */
+	    if (0 == i_track) {
+	      cd->tocent[i_track].start_lba = CDIO_PREGAP_SECTORS;
+	    } else if (cd->tocent[i_track-1].sec_count) {
+	      cd->tocent[i_track].start_lba = cd->tocent[i_track-1].start_lba +
+		cd->tocent[i_track-1].sec_count;
+	    } else {
+	      /* No length: the previous track takes up the rest of its file */
+	      const track_info_t *prev = &cd->tocent[i_track-1];
+	      uint16_t i_blocksize = prev->blocksize;
+	      off_t i_size = cdio_stream_stat(prev->data_source) - prev->offset;
 
-		  check_track_is_blocksize_multiple(cd->tocent[i_track-1].filename,
-						    i_track-1, i_size, i_blocksize);
-		/* Append size of previous datafile. */
-		cd->tocent[i_track].start_lba = (lba_t) (cd->tocent[i_track-1].start_lba +
-		  (i_size / i_blocksize));
-	      }
-	      cd->tocent[i_track].offset = 0;
-	      cd->tocent[i_track].start_lba += CDIO_PREGAP_SECTORS;
-	      cdio_lba_to_msf(cd->tocent[i_track].start_lba,
-			      &(cd->tocent[i_track].start_msf));
+	      check_track_is_blocksize_multiple(prev->filename,
+						i_track-1, i_size, i_blocksize);
+	      cd->tocent[i_track].start_lba = (lba_t)
+		((prev->data_lba ? prev->data_lba : prev->start_lba) +
+		 (i_size / i_blocksize));
 	    }
+	    cd->tocent[i_track].data_lba = cd->tocent[i_track].start_lba;
+	    cdio_lba_to_msf(cd->tocent[i_track].start_lba,
+			    &(cd->tocent[i_track].start_msf));
 	  }
 
 	} else {
@@ -896,7 +909,9 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	      cd->tocent[i_track].start_lba += cdio_mmssff_to_lba (psz_field);
 	      cdio_lba_to_msf(cd->tocent[i_track].start_lba,
 			      &(cd->tocent[i_track].start_msf));
-	      cd->tocent[i_track].sec_count -= cdio_mmssff_to_lba (psz_field);
+	      /* Unknown lengths stay unknown */
+	      if (cd->tocent[i_track].sec_count)
+		cd->tocent[i_track].sec_count -= cdio_mmssff_to_lba (psz_field);
 	    }
 	  }
 
@@ -1033,6 +1048,42 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 }
 
 /**
+   Returns the DATAFILE track that holds lsn, or NULL if there is none.
+   Pregap sectors set with START belong to the track that follows them.
+ */
+static const track_info_t *
+_get_data_track_cdrdao (const _img_private_t *env, lsn_t lsn)
+{
+  const lba_t lba = cdio_lsn_to_lba(lsn);
+  int i;
+
+  for (i = env->gen.i_tracks - 1; i >= 0; i--) {
+    const track_info_t *this_track = &env->tocent[i];
+    if (this_track->data_lba && this_track->data_lba <= lba)
+      return this_track;
+  }
+  return NULL;
+}
+
+/**
+   Reads the whole block of the sector at lsn, blocksize bytes, from
+   this_track's data file into buf.
+ */
+static driver_return_code_t
+_read_block_cdrdao (const track_info_t *this_track, uint8_t *buf, lsn_t lsn)
+{
+  const off_t pos = this_track->offset + (off_t)
+    (cdio_lsn_to_lba(lsn) - this_track->data_lba) * this_track->blocksize;
+
+  if (0 != cdio_stream_seek (this_track->data_source, pos, SEEK_SET))
+    return DRIVER_OP_ERROR;
+  if (this_track->blocksize !=
+      cdio_stream_read (this_track->data_source, buf, this_track->blocksize, 1))
+    return DRIVER_OP_ERROR;
+  return DRIVER_OP_SUCCESS;
+}
+
+/**
    Reads a single audio sector from CD device into data starting
    from lsn. Returns 0 if no error.
  */
@@ -1043,6 +1094,26 @@ _read_audio_sectors_cdrdao (void *user_data, void *data, lsn_t lsn,
   _img_private_t *env = user_data;
   int ret;
 
+  if (_get_data_track_cdrdao(env, lsn)) {
+    uint8_t buf[CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB];
+    uint8_t *p = data;
+    unsigned int i;
+
+    for (i = 0; i < nblocks; i++) {
+      const track_info_t *this_track = _get_data_track_cdrdao(env, lsn + i);
+      if (!this_track || this_track->blocksize < CDIO_CD_FRAMESIZE_RAW ||
+	  this_track->blocksize > sizeof(buf))
+	return DRIVER_OP_ERROR;
+      ret = _read_block_cdrdao(this_track, buf, lsn + i);
+      if (ret)
+	return ret;
+      memcpy(p, buf, CDIO_CD_FRAMESIZE_RAW);
+      p += CDIO_CD_FRAMESIZE_RAW;
+    }
+    return DRIVER_OP_SUCCESS;
+  }
+
+  /* FILE and AUDIOFILE tracks */
   ret = cdio_stream_seek (env->tocent[0].data_source,
             lsn * CDIO_CD_FRAMESIZE_RAW, SEEK_SET);
   if (ret!=0) return ret;
