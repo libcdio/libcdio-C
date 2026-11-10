@@ -174,6 +174,47 @@ check_odd_cuex(void)
   return ret;
 }
 
+/* A CDTX chunk that fails to parse must leave the image without
+   CD-TEXT, and must free it only once. */
+static int
+check_bad_cdtext(void)
+{
+  uint8_t nrg[CDIO_CD_FRAMESIZE_RAW + 28 + 26 + 8 + 12] = {0};
+  uint8_t *p = nrg + CDIO_CD_FRAMESIZE_RAW;
+  char psz_tmp[NRG_TMP_SIZE];
+  CdIo_t *p_cdio;
+  int ret = 1;
+
+  put_be32(p, 0x45544e46);        /* ETNF: one mode 2 track */
+  put_be32(p + 4, 20);
+  put_be32(p + 8, 0);             /* start */
+  put_be32(p + 12, CDIO_CD_FRAMESIZE_RAW); /* length */
+  put_be32(p + 16, 7);            /* type */
+  p += 28;
+  put_be32(p, 0x43445458);        /* CDTX: one pack without a BLOCKSIZE pack */
+  put_be32(p + 4, 18);
+  p[8] = 0x80;                    /* title */
+  memset(p + 12, 'A', 12);
+  p += 26;
+  put_be32(p, 0x454e4421);        /* END! */
+  p += 8;
+  put_be32(p, 0x4e455235);        /* NER5 footer */
+  put_be64(p + 4, CDIO_CD_FRAMESIZE_RAW);
+
+  if (write_tmp_nrg(nrg, sizeof(nrg), psz_tmp))
+    return 1;
+  p_cdio = cdio_open_nrg(psz_tmp);
+  remove(psz_tmp);
+  if (!p_cdio)
+    return 1;
+  if (cdio_get_cdtext(p_cdio) == NULL)
+    ret = 0;
+  else
+    printf("NRG image with invalid CD-TEXT has CD-TEXT\n");
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
 static int
 check_truncated_dao(void)
 {
@@ -267,6 +308,11 @@ main(int argc, const char *argv[])
   if (check_odd_cuex() != 0) {
     printf("Mishandled CUEX metadata with an unpaired entry.\n");
     return(8);
+  }
+
+  if (check_bad_cdtext() != 0) {
+    printf("Mishandled invalid CD-TEXT metadata.\n");
+    return(9);
   }
 
   return 0;
