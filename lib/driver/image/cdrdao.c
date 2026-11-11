@@ -1353,10 +1353,11 @@ _read_mode2_sectors_cdrdao (void *user_data, void *data, lsn_t lsn,
   _img_private_t *env = user_data;
   int i;
   int retval;
+  unsigned int blocksize = b_form2 ? M2RAW_SECTOR_SIZE : CDIO_CD_FRAMESIZE;
 
   for (i = 0; i < nblocks; i++) {
     if ( (retval = _read_mode2_sector_cdrdao (env,
-					    ((char *)data) + (CDIO_CD_FRAMESIZE * i),
+					    ((char *)data) + (blocksize * i),
 					    lsn + i, b_form2)) )
       return retval;
   }

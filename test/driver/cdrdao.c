@@ -348,6 +348,48 @@ check_datafile_mode(const char *psz_mode, unsigned int blocksize)
   return ret;
 }
 
+/* Reading several Mode 2 sectors at once gives each one after the
+   other, as reading them one by one does */
+static int
+check_mode2_sectors(void)
+{
+  const char *toc_name = DATA_DIR "/isofs-m1.toc";
+  enum { LSN = 16, NBLOCKS = 4 };
+  static uint8_t buf[NBLOCKS * M2RAW_SECTOR_SIZE];
+  static uint8_t one[M2RAW_SECTOR_SIZE];
+  CdIo_t *p_cdio = cdio_open_cdrdao(toc_name);
+  unsigned int form2, i;
+  int ret = 0;
+
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    return 1;
+  }
+  for (form2 = 0; form2 <= 1 && !ret; form2++) {
+    const unsigned int size = form2 ? M2RAW_SECTOR_SIZE : CDIO_CD_FRAMESIZE;
+
+    memset(buf, 0xff, sizeof(buf));
+    if (DRIVER_OP_SUCCESS !=
+	cdio_read_mode2_sectors(p_cdio, buf, LSN, form2, NBLOCKS)) {
+      fprintf(stderr, "Incorrect: %s mode 2 read failed.\n", toc_name);
+      ret = 1;
+      break;
+    }
+    for (i = 0; i < NBLOCKS; i++) {
+      if (DRIVER_OP_SUCCESS !=
+	  cdio_read_mode2_sector(p_cdio, one, LSN + i, form2) ||
+	  memcmp(buf + i * size, one, size)) {
+	fprintf(stderr, "Incorrect: %s mode 2 form %u sector %u of %u.\n",
+		toc_name, form2 + 1, i + 1, NBLOCKS);
+	ret = 1;
+	break;
+      }
+    }
+  }
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
 /* Each track has the format of its own mode */
 static int
 check_track_formats(void)
@@ -442,7 +484,8 @@ main(int argc, const char *argv[])
   unsigned int verbose = (argc > 1);
 
   if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
-      check_no_subchannel() || check_track_formats())
+      check_no_subchannel() || check_track_formats() ||
+      check_mode2_sectors())
     ret = 1;
   if (check_datafile_mode("AUDIO", 2352)
       || check_datafile_mode("MODE1", 2048)
