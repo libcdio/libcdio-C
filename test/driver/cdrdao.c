@@ -50,7 +50,7 @@
 #endif
 
 #define NUM_GOOD_TOCS 17
-#define NUM_BAD_TOCS 10
+#define NUM_BAD_TOCS 11
 
 #define RW_RAW_SECTORS 14
 #define RW_RAW_BLOCKSIZE (CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB)
@@ -617,8 +617,8 @@ main(int argc, const char *argv[])
     "bad-file.toc",
     "bad-mode1.toc",
     "bad-tracknum-exceeded.toc",
-    "bad-tracknum-overflow.toc"
-    "bad-pretrack-isrc.toc"
+    "bad-tracknum-overflow.toc",
+    "bad-pretrack-isrc.toc",
   };
   int ret=0;
   unsigned int i;
