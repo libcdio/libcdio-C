@@ -399,10 +399,11 @@ pattern(unsigned int sector, unsigned int pos)
 }
 
 /* Read the data sectors of a track in a mode, stored as cdrdao stores
-   them: size bytes from offset in each raw sector */
+   them: size bytes from offset in each raw sector, followed by 96 bytes
+   of sub-channel data if psz_sub isn't NULL */
 static int
 check_mode_sectors(const char *psz_mode, unsigned int offset,
-		   unsigned int size, bool b_datafile)
+		   unsigned int size, bool b_datafile, const char *psz_sub)
 {
   enum { SECTORS = 8 };
   const char *toc_name = "cdrdao-data-sectors.toc";
@@ -423,24 +424,30 @@ check_mode_sectors(const char *psz_mode, unsigned int offset,
   }
   if (b_datafile && write_zeros(audio_name, 4 * CDIO_CD_FRAMESIZE_RAW))
     goto out;
-  for (k = 0; k < SECTORS; k++)
+  for (k = 0; k < SECTORS; k++) {
     for (pos = offset; pos < offset + size; pos++)
       fputc(pattern(k, pos), bin);
+    /* Sub-channel data that mustn't be read as part of the sector */
+    if (psz_sub)
+      for (pos = 0; pos < CDIO_CD_FRAMESIZE_SUB; pos++)
+	fputc(~pattern(k, pos), bin);
+  }
   fclose(bin);
   bin = NULL;
   if (b_datafile)
     fprintf(toc, "CD_ROM_XA\nTRACK AUDIO\nDATAFILE \"%s\"\n"
-	    "TRACK %s\nDATAFILE \"%s\"\n", audio_name, psz_mode, bin_name);
+	    "TRACK %s %s\nDATAFILE \"%s\"\n", audio_name, psz_mode,
+	    psz_sub ? psz_sub : "", bin_name);
   else
-    fprintf(toc, "CD_ROM_XA\nTRACK %s\nFILE \"%s\" 00:00:00\n",
-	    psz_mode, bin_name);
+    fprintf(toc, "CD_ROM_XA\nTRACK %s %s\nFILE \"%s\" 00:00:00\n",
+	    psz_mode, psz_sub ? psz_sub : "", bin_name);
   fclose(toc);
   toc = NULL;
 
   p_cdio = cdio_open_cdrdao(toc_name);
   if (!p_cdio) {
-    fprintf(stderr, "Incorrect: %s track in %s doesn't open.\n", psz_mode,
-	    b_datafile ? "a DATAFILE" : "a FILE");
+    fprintf(stderr, "Incorrect: %s %s track in %s doesn't open.\n",
+	    psz_mode, psz_sub ? psz_sub : "", b_datafile ? "a DATAFILE" : "a FILE");
     goto out;
   }
   lsn = cdio_get_track_lsn(p_cdio, b_datafile ? 2 : 1);
@@ -466,8 +473,9 @@ check_mode_sectors(const char *psz_mode, unsigned int offset,
 	cdio_read_mode2_sector(p_cdio, buf, lsn + k, true) ||
 	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
 	       M2RAW_SECTOR_SIZE)) {
-      fprintf(stderr, "Incorrect: sector %u of a %s track in %s.\n", k,
-	      psz_mode, b_datafile ? "a DATAFILE" : "a FILE");
+      fprintf(stderr, "Incorrect: sector %u of a %s %s track in %s.\n", k,
+	      psz_mode, psz_sub ? psz_sub : "",
+	      b_datafile ? "a DATAFILE" : "a FILE");
       goto out;
     }
   }
@@ -486,10 +494,12 @@ check_mode_sectors(const char *psz_mode, unsigned int offset,
   return ret;
 }
 
-/* Read data sectors of each mode, from a track's own file */
+/* Read data sectors of each mode, from a track's own file, without and
+   with sub-channel data */
 static int
 check_data_sectors(void)
 {
+  static const char *subs[] = { NULL, "RW", "RW_RAW" };
   static const struct {
     const char *mode;
     unsigned int offset, size;
@@ -506,16 +516,18 @@ check_data_sectors(void)
                         M2RAW_SECTOR_SIZE },
     { "MODE2_RAW",      0, CDIO_CD_FRAMESIZE_RAW },
   };
-  unsigned int i;
+  unsigned int i, j;
   int ret = 0;
 
   for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
-    if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
-			   true))
-      ret = 1;
-    if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
-			   false))
-      ret = 1;
+    for (j = 0; j < sizeof(subs) / sizeof(subs[0]); j++) {
+      if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
+			     true, subs[j]))
+	ret = 1;
+      if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
+			     false, subs[j]))
+	ret = 1;
+    }
   }
   return ret;
 }
