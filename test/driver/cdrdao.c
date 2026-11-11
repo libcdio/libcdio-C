@@ -280,6 +280,310 @@ check_track_without_mode(void)
   return 0;
 }
 
+/* Create a file of size zero bytes in the current directory. TOC files
+   written by the tests refer to their data files by a relative name: an
+   absolute DATA_DIR may start with a drive letter, which file names in a
+   TOC can't. Returns 0 if no error. */
+static int
+write_zeros(const char *psz_name, long size)
+{
+  FILE *fp = fopen(psz_name, "wb");
+  long i;
+
+  if (!fp) {
+    fprintf(stderr, "Unable to create %s\n", psz_name);
+    return 1;
+  }
+  for (i = 0; i < size; i++)
+    fputc(0, fp);
+  if (fclose(fp)) {
+    fprintf(stderr, "Unable to write %s\n", psz_name);
+    remove(psz_name);
+    return 1;
+  }
+  return 0;
+}
+
+/* A DATAFILE without a length takes up the rest of its file, which is
+   counted in sectors of the track mode's size in the file. */
+static int
+check_datafile_mode(const char *psz_mode, unsigned int blocksize)
+{
+  const char *toc_name = "cdrdao-datafile-mode.toc";
+  const char *bin_name = "cdrdao-datafile-mode.bin";
+  /* Not a whole number of sectors of any size */
+  const long size = 100 * CDIO_CD_FRAMESIZE_RAW + 1000;
+  FILE *toc;
+  CdIo_t *p_cdio;
+  unsigned int sec_count;
+  int ret = 1;
+
+  if (write_zeros(bin_name, size))
+    return 1;
+  toc = fopen(toc_name, "w");
+  if (!toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  fprintf(toc, "CD_ROM_XA\nTRACK %s\nDATAFILE \"%s\"\n", psz_mode, bin_name);
+  fclose(toc);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Can't open a %s DATAFILE track\n", psz_mode);
+    remove(bin_name);
+    return 1;
+  }
+  /* Round up a partial last sector */
+  sec_count = cdio_get_track_sec_count(p_cdio, 1);
+  if (sec_count == (size + blocksize - 1) / blocksize)
+    ret = 0;
+  else
+    fprintf(stderr, "%s DATAFILE track has %u sectors, not %lu\n", psz_mode,
+            sec_count, (size + blocksize - 1) / blocksize);
+  cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
+/* Reading several Mode 2 sectors at once gives each one after the
+   other, as reading them one by one does */
+static int
+check_mode2_sectors(void)
+{
+  const char *toc_name = DATA_DIR "/isofs-m1.toc";
+  enum { LSN = 16, NBLOCKS = 4 };
+  static uint8_t buf[NBLOCKS * M2RAW_SECTOR_SIZE];
+  static uint8_t one[M2RAW_SECTOR_SIZE];
+  CdIo_t *p_cdio = cdio_open_cdrdao(toc_name);
+  unsigned int form2, i;
+  int ret = 0;
+
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    return 1;
+  }
+  for (form2 = 0; form2 <= 1 && !ret; form2++) {
+    const unsigned int size = form2 ? M2RAW_SECTOR_SIZE : CDIO_CD_FRAMESIZE;
+
+    memset(buf, 0xff, sizeof(buf));
+    if (DRIVER_OP_SUCCESS !=
+	cdio_read_mode2_sectors(p_cdio, buf, LSN, form2, NBLOCKS)) {
+      fprintf(stderr, "Incorrect: %s mode 2 read failed.\n", toc_name);
+      ret = 1;
+      break;
+    }
+    for (i = 0; i < NBLOCKS; i++) {
+      if (DRIVER_OP_SUCCESS !=
+	  cdio_read_mode2_sector(p_cdio, one, LSN + i, form2) ||
+	  memcmp(buf + i * size, one, size)) {
+	fprintf(stderr, "Incorrect: %s mode 2 form %u sector %u of %u.\n",
+		toc_name, form2 + 1, i + 1, NBLOCKS);
+	ret = 1;
+	break;
+      }
+    }
+  }
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
+/* The byte at pos of the raw sector of a data track sector, in the test
+   pattern of check_data_sectors */
+static uint8_t
+pattern(unsigned int sector, unsigned int pos)
+{
+  return (uint8_t) (sector * 37 + pos * 7 + pos / 256);
+}
+
+/* Read the data sectors of a track in a mode, stored as cdrdao stores
+   them: size bytes from offset in each raw sector, followed by 96 bytes
+   of sub-channel data if psz_sub isn't NULL */
+static int
+check_mode_sectors(const char *psz_mode, unsigned int offset,
+		   unsigned int size, bool b_datafile, const char *psz_sub)
+{
+  enum { SECTORS = 8 };
+  const char *toc_name = "cdrdao-data-sectors.toc";
+  const char *bin_name = "cdrdao-data-sectors.bin";
+  const char *audio_name = "cdrdao-data-sectors-audio.bin";
+  uint8_t raw[CDIO_CD_FRAMESIZE_RAW];
+  uint8_t buf[M2RAW_SECTOR_SIZE];
+  FILE *bin = fopen(bin_name, "wb");
+  FILE *toc = fopen(toc_name, "w");
+  CdIo_t *p_cdio = NULL;
+  unsigned int k, pos;
+  lsn_t lsn = 0;
+  int ret = 1;
+
+  if (!bin || !toc) {
+    fprintf(stderr, "Unable to create %s or %s\n", bin_name, toc_name);
+    goto out;
+  }
+  if (b_datafile && write_zeros(audio_name, 4 * CDIO_CD_FRAMESIZE_RAW))
+    goto out;
+  for (k = 0; k < SECTORS; k++) {
+    for (pos = offset; pos < offset + size; pos++)
+      fputc(pattern(k, pos), bin);
+    /* Sub-channel data that mustn't be read as part of the sector */
+    if (psz_sub)
+      for (pos = 0; pos < CDIO_CD_FRAMESIZE_SUB; pos++)
+	fputc(~pattern(k, pos), bin);
+  }
+  fclose(bin);
+  bin = NULL;
+  if (b_datafile)
+    fprintf(toc, "CD_ROM_XA\nTRACK AUDIO\nDATAFILE \"%s\"\n"
+	    "TRACK %s %s\nDATAFILE \"%s\"\n", audio_name, psz_mode,
+	    psz_sub ? psz_sub : "", bin_name);
+  else
+    fprintf(toc, "CD_ROM_XA\nTRACK %s %s\nFILE \"%s\" 00:00:00\n",
+	    psz_mode, psz_sub ? psz_sub : "", bin_name);
+  fclose(toc);
+  toc = NULL;
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s %s track in %s doesn't open.\n",
+	    psz_mode, psz_sub ? psz_sub : "", b_datafile ? "a DATAFILE" : "a FILE");
+    goto out;
+  }
+  lsn = cdio_get_track_lsn(p_cdio, b_datafile ? 2 : 1);
+
+  for (k = 0; k < SECTORS; k++) {
+    /* The raw sector, with what isn't stored as zeros */
+    memset(raw, 0, sizeof(raw));
+    for (pos = offset; pos < offset + size; pos++)
+      raw[pos] = pattern(k, pos);
+
+    if (DRIVER_OP_SUCCESS !=
+	cdio_read_mode1_sector(p_cdio, buf, lsn + k, false) ||
+	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+	       CDIO_CD_FRAMESIZE) ||
+	DRIVER_OP_SUCCESS !=
+	cdio_read_mode1_sector(p_cdio, buf, lsn + k, true) ||
+	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+	       M2RAW_SECTOR_SIZE) ||
+	DRIVER_OP_SUCCESS !=
+	cdio_read_mode2_sector(p_cdio, buf, lsn + k, false) ||
+	memcmp(buf, raw + CDIO_CD_XA_SYNC_HEADER, CDIO_CD_FRAMESIZE) ||
+	DRIVER_OP_SUCCESS !=
+	cdio_read_mode2_sector(p_cdio, buf, lsn + k, true) ||
+	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+	       M2RAW_SECTOR_SIZE)) {
+      fprintf(stderr, "Incorrect: sector %u of a %s %s track in %s.\n", k,
+	      psz_mode, psz_sub ? psz_sub : "",
+	      b_datafile ? "a DATAFILE" : "a FILE");
+      goto out;
+    }
+  }
+  ret = 0;
+
+ out:
+  if (p_cdio)
+    cdio_destroy(p_cdio);
+  if (bin)
+    fclose(bin);
+  if (toc)
+    fclose(toc);
+  remove(bin_name);
+  remove(audio_name);
+  remove(toc_name);
+  return ret;
+}
+
+/* Read data sectors of each mode, from a track's own file, without and
+   with sub-channel data */
+static int
+check_data_sectors(void)
+{
+  static const char *subs[] = { NULL, "RW", "RW_RAW" };
+  static const struct {
+    const char *mode;
+    unsigned int offset, size;
+  } modes[] = {
+    /* Where the stored bytes are in the raw sector */
+    { "MODE1",          CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+                        CDIO_CD_FRAMESIZE },
+    { "MODE1_RAW",      0, CDIO_CD_FRAMESIZE_RAW },
+    { "MODE2",          CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+                        M2RAW_SECTOR_SIZE },
+    { "MODE2_FORM1",    CDIO_CD_XA_SYNC_HEADER, CDIO_CD_FRAMESIZE },
+    { "MODE2_FORM2",    CDIO_CD_XA_SYNC_HEADER, M2F2_SECTOR_SIZE },
+    { "MODE2_FORM_MIX", CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+                        M2RAW_SECTOR_SIZE },
+    { "MODE2_RAW",      0, CDIO_CD_FRAMESIZE_RAW },
+  };
+  unsigned int i, j;
+  int ret = 0;
+
+  for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+    for (j = 0; j < sizeof(subs) / sizeof(subs[0]); j++) {
+      if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
+			     true, subs[j]))
+	ret = 1;
+      if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
+			     false, subs[j]))
+	ret = 1;
+    }
+  }
+  return ret;
+}
+
+/* Each track has the format of its own mode */
+static int
+check_track_formats(void)
+{
+  static const struct {
+    const char *mode;
+    track_format_t format;
+  } tracks[] = {
+    { "MODE1_RAW",   TRACK_FORMAT_DATA },
+    { "AUDIO",       TRACK_FORMAT_AUDIO },
+    { "MODE2_FORM1", TRACK_FORMAT_XA },
+    { "AUDIO",       TRACK_FORMAT_AUDIO },
+  };
+  const char *toc_name = "cdrdao-track-formats.toc";
+  const char *bin_name = "cdrdao-track-formats.bin";
+  FILE *toc;
+  CdIo_t *p_cdio;
+  unsigned int i;
+  int ret = 0;
+
+  if (write_zeros(bin_name, 10 * CDIO_CD_FRAMESIZE_RAW))
+    return 1;
+  toc = fopen(toc_name, "w");
+  if (!toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  for (i = 0; i < sizeof(tracks) / sizeof(tracks[0]); i++)
+    fprintf(toc, "TRACK %s\nFILE \"%s\" 00:00:00 00:00:10\n",
+	    tracks[i].mode, bin_name);
+  fclose(toc);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  for (i = 0; i < sizeof(tracks) / sizeof(tracks[0]); i++) {
+    if (tracks[i].format != cdio_get_track_format(p_cdio, i + 1)) {
+      fprintf(stderr, "Incorrect: %s track %u (%s) format.\n",
+	      toc_name, i + 1, tracks[i].mode);
+      ret = 1;
+    }
+  }
+  cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -322,7 +626,17 @@ main(int argc, const char *argv[])
   unsigned int verbose = (argc > 1);
 
   if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
-      check_no_subchannel())
+      check_no_subchannel() || check_track_formats() ||
+      check_mode2_sectors() || check_data_sectors())
+    ret = 1;
+  if (check_datafile_mode("AUDIO", 2352)
+      || check_datafile_mode("MODE1", 2048)
+      || check_datafile_mode("MODE1_RAW", 2352)
+      || check_datafile_mode("MODE2", 2336)
+      || check_datafile_mode("MODE2_FORM1", 2048)
+      || check_datafile_mode("MODE2_FORM2", 2324)
+      || check_datafile_mode("MODE2_FORM_MIX", 2336)
+      || check_datafile_mode("MODE2_RAW", 2352))
     ret = 1;
 
 #ifdef HAVE_CHDIR
