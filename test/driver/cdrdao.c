@@ -348,6 +348,58 @@ check_datafile_mode(const char *psz_mode, unsigned int blocksize)
   return ret;
 }
 
+/* Each track has the format of its own mode */
+static int
+check_track_formats(void)
+{
+  static const struct {
+    const char *mode;
+    track_format_t format;
+  } tracks[] = {
+    { "MODE1_RAW",   TRACK_FORMAT_DATA },
+    { "AUDIO",       TRACK_FORMAT_AUDIO },
+    { "MODE2_FORM1", TRACK_FORMAT_XA },
+    { "AUDIO",       TRACK_FORMAT_AUDIO },
+  };
+  const char *toc_name = "cdrdao-track-formats.toc";
+  const char *bin_name = "cdrdao-track-formats.bin";
+  FILE *toc;
+  CdIo_t *p_cdio;
+  unsigned int i;
+  int ret = 0;
+
+  if (write_zeros(bin_name, 10 * CDIO_CD_FRAMESIZE_RAW))
+    return 1;
+  toc = fopen(toc_name, "w");
+  if (!toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  for (i = 0; i < sizeof(tracks) / sizeof(tracks[0]); i++)
+    fprintf(toc, "TRACK %s\nFILE \"%s\" 00:00:00 00:00:10\n",
+	    tracks[i].mode, bin_name);
+  fclose(toc);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s doesn't open.\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  for (i = 0; i < sizeof(tracks) / sizeof(tracks[0]); i++) {
+    if (tracks[i].format != cdio_get_track_format(p_cdio, i + 1)) {
+      fprintf(stderr, "Incorrect: %s track %u (%s) format.\n",
+	      toc_name, i + 1, tracks[i].mode);
+      ret = 1;
+    }
+  }
+  cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -390,7 +442,7 @@ main(int argc, const char *argv[])
   unsigned int verbose = (argc > 1);
 
   if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
-      check_no_subchannel())
+      check_no_subchannel() || check_track_formats())
     ret = 1;
   if (check_datafile_mode("MODE2", 2336)
       || check_datafile_mode("MODE2_FORM1", 2048)

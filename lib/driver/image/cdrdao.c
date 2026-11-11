@@ -474,7 +474,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    }
 	  } else if (0 == strcmp ("MODE1_RAW", psz_field)) {
 	    if (NULL != cd) {
-	      cd->tocent[i_track+1].track_format = TRACK_FORMAT_DATA;
+	      cd->tocent[i_track].track_format = TRACK_FORMAT_DATA;
 	      cd->tocent[i_track].blocksize = CDIO_CD_FRAMESIZE_RAW;
 	      cd->tocent[i_track].datastart = CDIO_CD_SYNC_SIZE
 		+ CDIO_CD_HEADER_SIZE;
@@ -525,7 +525,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    }
 	  } else if (0 == strcmp ("MODE2_FORM1", psz_field)) {
 	    if (NULL != cd) {
-	      cd->tocent[i_track+1].track_format = TRACK_FORMAT_XA;
+	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
 	      cd->tocent[i_track].blocksize = CDIO_CD_FRAMESIZE;
 	      cd->tocent[i_track].datastart = CDIO_CD_SYNC_SIZE
 		+ CDIO_CD_HEADER_SIZE;
