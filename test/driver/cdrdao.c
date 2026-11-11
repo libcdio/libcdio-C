@@ -444,9 +444,14 @@ main(int argc, const char *argv[])
   if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
       check_no_subchannel() || check_track_formats())
     ret = 1;
-  if (check_datafile_mode("MODE2", 2336)
+  if (check_datafile_mode("AUDIO", 2352)
+      || check_datafile_mode("MODE1", 2048)
+      || check_datafile_mode("MODE1_RAW", 2352)
+      || check_datafile_mode("MODE2", 2336)
       || check_datafile_mode("MODE2_FORM1", 2048)
-      || check_datafile_mode("MODE2_FORM2", 2324))
+      || check_datafile_mode("MODE2_FORM2", 2324)
+      || check_datafile_mode("MODE2_FORM_MIX", 2336)
+      || check_datafile_mode("MODE2_RAW", 2352))
     ret = 1;
 
 #ifdef HAVE_CHDIR

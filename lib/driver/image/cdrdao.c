@@ -448,13 +448,12 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    }
 	  } else if (0 == strcmp ("MODE1", psz_field)) {
 	    if (NULL != cd) {
+	      /* 2048 bytes of user data per sector */
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_DATA;
-	      cd->tocent[i_track].blocksize    = CDIO_CD_FRAMESIZE_RAW;
-	      cd->tocent[i_track].datastart    = CDIO_CD_SYNC_SIZE
-		+ CDIO_CD_HEADER_SIZE;
+	      cd->tocent[i_track].blocksize    = CDIO_CD_FRAMESIZE;
+	      cd->tocent[i_track].datastart    = 0;
 	      cd->tocent[i_track].datasize     = CDIO_CD_FRAMESIZE;
-	      cd->tocent[i_track].endsize      = CDIO_CD_EDC_SIZE
-		+ CDIO_CD_M1F1_ZERO_SIZE + CDIO_CD_ECC_SIZE;
+	      cd->tocent[i_track].endsize      = 0;
 	      switch(cd->disc_mode) {
 	      case CDIO_DISC_MODE_NO_INFO:
 		cd->disc_mode = CDIO_DISC_MODE_CD_DATA;
@@ -501,11 +500,11 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
+	      /* 2336 bytes per sector: the sector without sync and header */
 	      cd->tocent[i_track].blocksize    = M2RAW_SECTOR_SIZE;
-	      cd->tocent[i_track].datastart = CDIO_CD_SYNC_SIZE
-		+ CDIO_CD_HEADER_SIZE;
-	      cd->tocent[i_track].datasize = M2RAW_SECTOR_SIZE;
-	      cd->tocent[i_track].endsize   = 0;
+	      cd->tocent[i_track].datastart    = 0;
+	      cd->tocent[i_track].datasize     = M2RAW_SECTOR_SIZE;
+	      cd->tocent[i_track].endsize      = 0;
 	      switch(cd->disc_mode) {
 	      case CDIO_DISC_MODE_NO_INFO:
 		cd->disc_mode = CDIO_DISC_MODE_CD_XA;
@@ -526,11 +525,11 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2_FORM1", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
-	      cd->tocent[i_track].blocksize = CDIO_CD_FRAMESIZE;
-	      cd->tocent[i_track].datastart = CDIO_CD_SYNC_SIZE
-		+ CDIO_CD_HEADER_SIZE;
-	      cd->tocent[i_track].datasize  = CDIO_CD_FRAMESIZE_RAW;
-	      cd->tocent[i_track].endsize   = 0;
+	      /* 2048 bytes of user data per sector */
+	      cd->tocent[i_track].blocksize    = CDIO_CD_FRAMESIZE;
+	      cd->tocent[i_track].datastart    = 0;
+	      cd->tocent[i_track].datasize     = CDIO_CD_FRAMESIZE;
+	      cd->tocent[i_track].endsize      = 0;
 	      switch(cd->disc_mode) {
 	      case CDIO_DISC_MODE_NO_INFO:
 		cd->disc_mode = CDIO_DISC_MODE_CD_XA;
@@ -551,12 +550,11 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2_FORM2", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
+	      /* 2324 bytes of user data per sector */
 	      cd->tocent[i_track].blocksize    = M2F2_SECTOR_SIZE;
-	      cd->tocent[i_track].datastart    = CDIO_CD_SYNC_SIZE
-		+ CDIO_CD_HEADER_SIZE + CDIO_CD_SUBHEADER_SIZE;
-	      cd->tocent[i_track].datasize     = CDIO_CD_FRAMESIZE;
-	      cd->tocent[i_track].endsize      = CDIO_CD_SYNC_SIZE
-		+ CDIO_CD_ECC_SIZE;
+	      cd->tocent[i_track].datastart    = 0;
+	      cd->tocent[i_track].datasize     = M2F2_SECTOR_SIZE;
+	      cd->tocent[i_track].endsize      = 0;
 	      switch(cd->disc_mode) {
 	      case CDIO_DISC_MODE_NO_INFO:
 		cd->disc_mode = CDIO_DISC_MODE_CD_XA;
@@ -577,10 +575,11 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	  } else if (0 == strcmp ("MODE2_FORM_MIX", psz_field)) {
 	    if (NULL != cd) {
 	      cd->tocent[i_track].track_format = TRACK_FORMAT_XA;
+	      /* 2336 bytes per sector, as MODE2, with the sub-header saying
+		 whether a sector is form 1 or form 2 */
+	      cd->tocent[i_track].blocksize    = M2RAW_SECTOR_SIZE;
+	      cd->tocent[i_track].datastart    = 0;
 	      cd->tocent[i_track].datasize     = M2RAW_SECTOR_SIZE;
-	      cd->tocent[i_track].blocksize    = CDIO_CD_FRAMESIZE_RAW;
-	      cd->tocent[i_track].datastart    = CDIO_CD_SYNC_SIZE +
-		CDIO_CD_HEADER_SIZE + CDIO_CD_SUBHEADER_SIZE;
 	      cd->tocent[i_track].track_green  = true;
 	      cd->tocent[i_track].endsize      = 0;
 	      switch(cd->disc_mode) {
@@ -608,7 +607,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 		CDIO_CD_HEADER_SIZE + CDIO_CD_SUBHEADER_SIZE;
 	      cd->tocent[i_track].datasize     = CDIO_CD_FRAMESIZE;
 	      cd->tocent[i_track].track_green  = true;
-	      cd->tocent[i_track].endsize      = 0;
+	      cd->tocent[i_track].endsize      = CDIO_CD_XA_TAIL;
 	      switch(cd->disc_mode) {
 	      case CDIO_DISC_MODE_NO_INFO:
 		cd->disc_mode = CDIO_DISC_MODE_CD_XA;

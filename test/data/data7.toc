@@ -4,7 +4,7 @@
 
 CD_ROM_XA
 
-TRACK MODE1 // ISO filesystem
+TRACK MODE1_RAW // ISO filesystem
 FILE "isofs-m1.bin" 00:00:00 00:03:57
 
 TRACK MODE2_FORM_MIX // XA track with form 1 and form 2 sectors
