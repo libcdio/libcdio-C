@@ -770,6 +770,9 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    if (NULL != cd) {
 	      cd->tocent[i_track].start_lba = i_start_lba;
 	      cdio_lba_to_msf(i_start_lba, &(cd->tocent[i_track].start_msf));
+	      /* Track positions are file positions: the file starts
+		 with the sector at LSN 0 */
+	      cd->tocent[i_track].data_lba = CDIO_PREGAP_SECTORS;
 	    }
 	  }
 	  if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
@@ -1050,7 +1053,8 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 }
 
 /**
-   Returns the DATAFILE track that holds lsn, or NULL if there is none.
+   Returns the FILE or DATAFILE track that holds lsn, or NULL if there is
+   none.
    Pregap sectors set with START belong to the track that follows them.
  */
 static const track_info_t *
@@ -1131,7 +1135,7 @@ _read_audio_sectors_cdrdao (void *user_data, void *data, lsn_t lsn,
     return DRIVER_OP_SUCCESS;
   }
 
-  /* FILE and AUDIOFILE tracks */
+  /* No FILE or DATAFILE track holds lsn */
   ret = cdio_stream_seek (env->tocent[0].data_source,
             lsn * CDIO_CD_FRAMESIZE_RAW, SEEK_SET);
   if (ret!=0) return ret;
@@ -1169,7 +1173,7 @@ _read_audio_sectors_sub_cdrdao (void *user_data, void *data, lsn_t lsn,
     const track_info_t *this_track = _get_data_track_cdrdao(env, lsn + i);
     driver_return_code_t ret;
 
-    /* FILE and AUDIOFILE tracks have no sub-channel data */
+    /* Only RW_RAW tracks have sub-channel data to return */
     if (!this_track || IMAGE_SUBCHANNEL_RW_RAW != this_track->subchannel ||
 	sizeof(buf) != this_track->blocksize)
       return DRIVER_OP_UNSUPPORTED;
@@ -1250,7 +1254,53 @@ _audio_read_subchannel_cdrdao (void *p_user_data,
 }
 
 /**
-   Reads a single mode2 sector from cd device into data starting
+   Reads the sector at lsn into raw, a raw sector of CDIO_CD_FRAMESIZE_RAW
+   bytes, with what the track's file doesn't store as zeros. Returns 0 if
+   no error.
+ */
+static driver_return_code_t
+_read_raw_sector_cdrdao (const _img_private_t *env, uint8_t *raw, lsn_t lsn)
+{
+  uint8_t buf[CDIO_CD_FRAMESIZE_RAW + CDIO_CD_FRAMESIZE_SUB];
+  const track_info_t *this_track = _get_data_track_cdrdao(env, lsn);
+  unsigned int size, start;
+  driver_return_code_t ret;
+
+  if (!this_track || this_track->blocksize > sizeof(buf))
+    return DRIVER_OP_ERROR;
+
+  /* Where the bytes stored for each sector go in the raw sector */
+  size = this_track->blocksize;
+  if (IMAGE_SUBCHANNEL_NONE != this_track->subchannel)
+    size -= CDIO_CD_FRAMESIZE_SUB;
+  switch (size) {
+  case CDIO_CD_FRAMESIZE_RAW:
+    start = 0;
+    break;
+  case M2RAW_SECTOR_SIZE:
+    start = CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE;
+    break;
+  case M2F2_SECTOR_SIZE:
+    start = CDIO_CD_XA_SYNC_HEADER;
+    break;
+  case CDIO_CD_FRAMESIZE:
+    start = TRACK_FORMAT_XA == this_track->track_format
+      ? CDIO_CD_XA_SYNC_HEADER : CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE;
+    break;
+  default:
+    return DRIVER_OP_ERROR;
+  }
+
+  ret = _read_block_cdrdao(this_track, buf, lsn);
+  if (ret)
+    return ret;
+  memset(raw, 0, CDIO_CD_FRAMESIZE_RAW);
+  memcpy(raw + start, buf, size);
+  return DRIVER_OP_SUCCESS;
+}
+
+/**
+   Reads a single mode1 sector from cd device into data starting
    from lsn. Returns 0 if no error.
  */
 static driver_return_code_t
@@ -1258,21 +1308,13 @@ _read_mode1_sector_cdrdao (void *user_data, void *data, lsn_t lsn,
 			 bool b_form2)
 {
   _img_private_t *env = user_data;
-  int ret;
-  char buf[CDIO_CD_FRAMESIZE_RAW] = { 0, };
+  uint8_t raw[CDIO_CD_FRAMESIZE_RAW];
+  driver_return_code_t ret = _read_raw_sector_cdrdao(env, raw, lsn);
 
-  ret = cdio_stream_seek (env->tocent[0].data_source,
-			  lsn * CDIO_CD_FRAMESIZE_RAW, SEEK_SET);
-  if (ret!=0) return ret;
-
-  /* FIXME: Not completely sure the below is correct. */
-  ret = cdio_stream_read (env->tocent[0].data_source, buf,
-			  CDIO_CD_FRAMESIZE_RAW, 1);
-  if (ret==0) return ret;
-
-  memcpy (data, buf + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+  if (ret)
+    return ret;
+  memcpy (data, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
 	  b_form2 ? M2RAW_SECTOR_SIZE: CDIO_CD_FRAMESIZE);
-
   return DRIVER_OP_SUCCESS;
 }
 
@@ -1300,7 +1342,7 @@ _read_mode1_sectors_cdrdao (void *user_data, void *data, lsn_t lsn,
 }
 
 /**
-   Reads a single mode1 sector from cd device into data starting
+   Reads a single mode2 sector from cd device into data starting
    from lsn. Returns 0 if no error.
  */
 static driver_return_code_t
@@ -1308,36 +1350,16 @@ _read_mode2_sector_cdrdao (void *user_data, void *data, lsn_t lsn,
 			 bool b_form2)
 {
   _img_private_t *env = user_data;
-  int ret;
-  char buf[CDIO_CD_FRAMESIZE_RAW] = { 0, };
-  long unsigned int i_off = lsn * CDIO_CD_FRAMESIZE_RAW;
+  uint8_t raw[CDIO_CD_FRAMESIZE_RAW];
+  driver_return_code_t ret = _read_raw_sector_cdrdao(env, raw, lsn);
 
-  /* For sms's VCD's (mwc1.toc) it is more like this:
-     if (i_off > 272) i_off -= 272;
-     There is that magic 272 that we find in read_audio_sectors_cdrdao again.
-  */
-
-  /* NOTE: The logic below seems a bit wrong and convoluted
-     to me, but passes the regression tests. (Perhaps it is why we get
-     valgrind errors in vcdxrip). Leave it the way it was for now.
-     Review this sector 2336 stuff later.
-  */
-
-  ret = cdio_stream_seek (env->tocent[0].data_source, i_off, SEEK_SET);
-  if (ret!=0) return ret;
-
-  ret = cdio_stream_read (env->tocent[0].data_source, buf,
-			  CDIO_CD_FRAMESIZE_RAW, 1);
-  if (ret==0) return ret;
-
-
-  /* See NOTE above. */
+  if (ret)
+    return ret;
   if (b_form2)
-    memcpy (data, buf + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+    memcpy (data, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
 	    M2RAW_SECTOR_SIZE);
   else
-    memcpy (data, buf + CDIO_CD_XA_SYNC_HEADER, CDIO_CD_FRAMESIZE);
-
+    memcpy (data, raw + CDIO_CD_XA_SYNC_HEADER, CDIO_CD_FRAMESIZE);
   return DRIVER_OP_SUCCESS;
 }
 

@@ -390,6 +390,136 @@ check_mode2_sectors(void)
   return ret;
 }
 
+/* The byte at pos of the raw sector of a data track sector, in the test
+   pattern of check_data_sectors */
+static uint8_t
+pattern(unsigned int sector, unsigned int pos)
+{
+  return (uint8_t) (sector * 37 + pos * 7 + pos / 256);
+}
+
+/* Read the data sectors of a track in a mode, stored as cdrdao stores
+   them: size bytes from offset in each raw sector */
+static int
+check_mode_sectors(const char *psz_mode, unsigned int offset,
+		   unsigned int size, bool b_datafile)
+{
+  enum { SECTORS = 8 };
+  const char *toc_name = "cdrdao-data-sectors.toc";
+  const char *bin_name = "cdrdao-data-sectors.bin";
+  const char *audio_name = "cdrdao-data-sectors-audio.bin";
+  uint8_t raw[CDIO_CD_FRAMESIZE_RAW];
+  uint8_t buf[M2RAW_SECTOR_SIZE];
+  FILE *bin = fopen(bin_name, "wb");
+  FILE *toc = fopen(toc_name, "w");
+  CdIo_t *p_cdio = NULL;
+  unsigned int k, pos;
+  lsn_t lsn = 0;
+  int ret = 1;
+
+  if (!bin || !toc) {
+    fprintf(stderr, "Unable to create %s or %s\n", bin_name, toc_name);
+    goto out;
+  }
+  if (b_datafile && write_zeros(audio_name, 4 * CDIO_CD_FRAMESIZE_RAW))
+    goto out;
+  for (k = 0; k < SECTORS; k++)
+    for (pos = offset; pos < offset + size; pos++)
+      fputc(pattern(k, pos), bin);
+  fclose(bin);
+  bin = NULL;
+  if (b_datafile)
+    fprintf(toc, "CD_ROM_XA\nTRACK AUDIO\nDATAFILE \"%s\"\n"
+	    "TRACK %s\nDATAFILE \"%s\"\n", audio_name, psz_mode, bin_name);
+  else
+    fprintf(toc, "CD_ROM_XA\nTRACK %s\nFILE \"%s\" 00:00:00\n",
+	    psz_mode, bin_name);
+  fclose(toc);
+  toc = NULL;
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: %s track in %s doesn't open.\n", psz_mode,
+	    b_datafile ? "a DATAFILE" : "a FILE");
+    goto out;
+  }
+  lsn = cdio_get_track_lsn(p_cdio, b_datafile ? 2 : 1);
+
+  for (k = 0; k < SECTORS; k++) {
+    /* The raw sector, with what isn't stored as zeros */
+    memset(raw, 0, sizeof(raw));
+    for (pos = offset; pos < offset + size; pos++)
+      raw[pos] = pattern(k, pos);
+
+    if (DRIVER_OP_SUCCESS !=
+	cdio_read_mode1_sector(p_cdio, buf, lsn + k, false) ||
+	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+	       CDIO_CD_FRAMESIZE) ||
+	DRIVER_OP_SUCCESS !=
+	cdio_read_mode1_sector(p_cdio, buf, lsn + k, true) ||
+	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+	       M2RAW_SECTOR_SIZE) ||
+	DRIVER_OP_SUCCESS !=
+	cdio_read_mode2_sector(p_cdio, buf, lsn + k, false) ||
+	memcmp(buf, raw + CDIO_CD_XA_SYNC_HEADER, CDIO_CD_FRAMESIZE) ||
+	DRIVER_OP_SUCCESS !=
+	cdio_read_mode2_sector(p_cdio, buf, lsn + k, true) ||
+	memcmp(buf, raw + CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+	       M2RAW_SECTOR_SIZE)) {
+      fprintf(stderr, "Incorrect: sector %u of a %s track in %s.\n", k,
+	      psz_mode, b_datafile ? "a DATAFILE" : "a FILE");
+      goto out;
+    }
+  }
+  ret = 0;
+
+ out:
+  if (p_cdio)
+    cdio_destroy(p_cdio);
+  if (bin)
+    fclose(bin);
+  if (toc)
+    fclose(toc);
+  remove(bin_name);
+  remove(audio_name);
+  remove(toc_name);
+  return ret;
+}
+
+/* Read data sectors of each mode, from a track's own file */
+static int
+check_data_sectors(void)
+{
+  static const struct {
+    const char *mode;
+    unsigned int offset, size;
+  } modes[] = {
+    /* Where the stored bytes are in the raw sector */
+    { "MODE1",          CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+                        CDIO_CD_FRAMESIZE },
+    { "MODE1_RAW",      0, CDIO_CD_FRAMESIZE_RAW },
+    { "MODE2",          CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+                        M2RAW_SECTOR_SIZE },
+    { "MODE2_FORM1",    CDIO_CD_XA_SYNC_HEADER, CDIO_CD_FRAMESIZE },
+    { "MODE2_FORM2",    CDIO_CD_XA_SYNC_HEADER, M2F2_SECTOR_SIZE },
+    { "MODE2_FORM_MIX", CDIO_CD_SYNC_SIZE + CDIO_CD_HEADER_SIZE,
+                        M2RAW_SECTOR_SIZE },
+    { "MODE2_RAW",      0, CDIO_CD_FRAMESIZE_RAW },
+  };
+  unsigned int i;
+  int ret = 0;
+
+  for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+    if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
+			   true))
+      ret = 1;
+    if (check_mode_sectors(modes[i].mode, modes[i].offset, modes[i].size,
+			   false))
+      ret = 1;
+  }
+  return ret;
+}
+
 /* Each track has the format of its own mode */
 static int
 check_track_formats(void)
@@ -485,7 +615,7 @@ main(int argc, const char *argv[])
 
   if (check_no_tracks() || check_track_without_mode() || check_rw_raw() ||
       check_no_subchannel() || check_track_formats() ||
-      check_mode2_sectors())
+      check_mode2_sectors() || check_data_sectors())
     ret = 1;
   if (check_datafile_mode("AUDIO", 2352)
       || check_datafile_mode("MODE1", 2048)
