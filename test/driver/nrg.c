@@ -69,20 +69,19 @@ put_be64(uint8_t *p, uint64_t value)
   put_be32(p + 4, value);
 }
 
+/* Write len bytes of buf to a new temporary file whose name is stored
+   in psz_tmp, which must hold at least NRG_TMP_SIZE bytes.
+   Returns 0 on success. The caller removes the file. */
+#define NRG_TMP_SIZE 64
 static int
-check_rejected_chunk(uint32_t id, uint32_t length)
+write_tmp_nrg(const uint8_t *buf, size_t len, char *psz_tmp)
 {
-  uint8_t nrg[20] = {0};
-#ifdef HAVE_MKSTEMP
-  char psz_tmp[] = "libcdio-nrg-XXXXXX";
-  int fd;
-#else
-  char *psz_tmp;
-#endif
   FILE *fp;
   int ret = 1;
-
 #ifdef HAVE_MKSTEMP
+  int fd;
+
+  snprintf(psz_tmp, NRG_TMP_SIZE, "libcdio-nrg-XXXXXX");
   fd = mkstemp(psz_tmp);
   if (fd < 0)
     return ret;
@@ -93,25 +92,126 @@ check_rejected_chunk(uint32_t id, uint32_t length)
     return ret;
   }
 #else
-  psz_tmp = tmpnam(NULL);
-  if (!psz_tmp)
+  const char *psz_name = tmpnam(NULL);
+
+  if (!psz_name)
     return ret;
+  snprintf(psz_tmp, NRG_TMP_SIZE, "%s", psz_name);
   fp = fopen(psz_tmp, "wb");
   if (!fp)
     return ret;
 #endif
 
+  if (fwrite(buf, 1, len, fp) == len)
+    ret = 0;
+  fclose(fp);
+  if (ret)
+    remove(psz_tmp);
+  return ret;
+}
+
+static int
+check_rejected_chunk(uint32_t id, uint32_t length)
+{
+  uint8_t nrg[20] = {0};
+  char psz_tmp[NRG_TMP_SIZE];
+  int ret;
+
   put_be32(&nrg[0], id);
   put_be32(&nrg[4], length);
   put_be32(&nrg[8], 0x4e455235); /* NER5 footer */
   put_be64(&nrg[12], 0);         /* footer starts at file offset 0 */
-  if (fwrite(nrg, 1, sizeof(nrg), fp) == sizeof(nrg)) {
-    fclose(fp);
-    ret = cdio_is_nrg(psz_tmp) ? 1 : 0;
-  } else {
-    fclose(fp);
-  }
+  if (write_tmp_nrg(nrg, sizeof(nrg), psz_tmp))
+    return 1;
+  ret = cdio_is_nrg(psz_tmp) ? 1 : 0;
   remove(psz_tmp);
+  return ret;
+}
+
+/* A CUEX chunk uses a pair of entries per track. An unpaired last entry
+   must be ignored, not paired with the bytes that follow the chunk. */
+static int
+check_odd_cuex(void)
+{
+  uint8_t nrg[5 * 8 + 8 + 8 + 12] = {0};
+  uint8_t *p = nrg;
+  char psz_tmp[NRG_TMP_SIZE];
+  CdIo_t *p_cdio;
+  int ret = 1;
+
+  put_be32(p, 0x43554558);        /* CUEX */
+  put_be32(p + 4, 5 * 8);         /* 5 entries */
+  p += 8;
+  put_be32(p + 4, (uint32_t) -150); /* entry 0: LSN -150 */
+  p += 8;
+  p += 8;                         /* entry 1: unused */
+  p[0] = 0x41; p[1] = 1;          /* entry 2: track 1 starts at LSN 0 */
+  put_be32(p + 4, 0);
+  p += 8;
+  p[0] = 0x41; p[1] = 0xaa;       /* entry 3: track 1 ends at LSN 100 */
+  put_be32(p + 4, 100);
+  p += 8;
+  p[0] = 0x41; p[1] = 2;          /* entry 4: unpaired */
+  put_be32(p + 4, 100);
+  p += 8;
+  put_be32(p, 0x454e4421);        /* END! */
+  p += 8;
+  put_be32(p, 0x4e455235);        /* NER5 footer */
+  put_be64(p + 4, 0);             /* footer starts at file offset 0 */
+
+  if (write_tmp_nrg(nrg, sizeof(nrg), psz_tmp))
+    return 1;
+  p_cdio = cdio_open_nrg(psz_tmp);
+  remove(psz_tmp);
+  if (!p_cdio)
+    return 1;
+  if (cdio_get_num_tracks(p_cdio) == 1)
+    ret = 0;
+  else
+    printf("NRG image with an odd CUEX entry count has %d tracks, not 1\n",
+           cdio_get_num_tracks(p_cdio));
+  cdio_destroy(p_cdio);
+  return ret;
+}
+
+/* A CDTX chunk that fails to parse must leave the image without
+   CD-TEXT, and must free it only once. */
+static int
+check_bad_cdtext(void)
+{
+  uint8_t nrg[CDIO_CD_FRAMESIZE_RAW + 28 + 26 + 8 + 12] = {0};
+  uint8_t *p = nrg + CDIO_CD_FRAMESIZE_RAW;
+  char psz_tmp[NRG_TMP_SIZE];
+  CdIo_t *p_cdio;
+  int ret = 1;
+
+  put_be32(p, 0x45544e46);        /* ETNF: one mode 2 track */
+  put_be32(p + 4, 20);
+  put_be32(p + 8, 0);             /* start */
+  put_be32(p + 12, CDIO_CD_FRAMESIZE_RAW); /* length */
+  put_be32(p + 16, 7);            /* type */
+  p += 28;
+  put_be32(p, 0x43445458);        /* CDTX: one pack without a BLOCKSIZE pack */
+  put_be32(p + 4, 18);
+  p[8] = 0x80;                    /* title */
+  memset(p + 12, 'A', 12);
+  p += 26;
+  put_be32(p, 0x454e4421);        /* END! */
+  p += 8;
+  put_be32(p, 0x4e455235);        /* NER5 footer */
+  put_be64(p + 4, CDIO_CD_FRAMESIZE_RAW);
+
+  if (write_tmp_nrg(nrg, sizeof(nrg), psz_tmp))
+    return 1;
+  p_cdio = cdio_open_nrg(psz_tmp);
+  remove(psz_tmp);
+  if (!p_cdio)
+    return 1;
+  if (cdio_get_cdtext(p_cdio) == NULL)
+    ret = 0;
+  else
+    printf("NRG image with invalid CD-TEXT has CD-TEXT\n");
+  cdio_destroy(p_cdio);
   return ret;
 }
 
@@ -203,6 +303,16 @@ main(int argc, const char *argv[])
   if (check_empty_cues() != 0) {
     printf("Accepted or failed to reject empty CUES metadata.\n");
     return(7);
+  }
+
+  if (check_odd_cuex() != 0) {
+    printf("Mishandled CUEX metadata with an unpaired entry.\n");
+    return(8);
+  }
+
+  if (check_bad_cdtext() != 0) {
+    printf("Mishandled invalid CD-TEXT metadata.\n");
+    return(9);
   }
 
   return 0;
