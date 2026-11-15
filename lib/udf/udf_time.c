@@ -125,8 +125,12 @@ udf_stamp_to_time(time_t *dest, long int *dest_usec,
   else
     offset = 0;
 
+  /* The month indexes __mon_yday[], so reject one out of range along
+     with a bad year or day. */
   if ((src.year < EPOCH_YEAR) ||
-      (src.year >= EPOCH_YEAR+MAX_YEAR_SECONDS))
+      (src.year >= EPOCH_YEAR+MAX_YEAR_SECONDS) ||
+      (src.month < 1) || (src.month > 12) ||
+      (src.day < 1) || (src.day > 31))
     {
       *dest = -1;
       *dest_usec = -1;
