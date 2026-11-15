@@ -95,6 +95,61 @@ check_file_before_first_track(void)
   return 0;
 }
 
+/* A CUE sheet may start at a track number other than 1. The sector
+   count of its last track must still be set, so seeking into it works */
+static int
+check_first_track_not_one(void)
+{
+  const char *cue_name = "bincue-first-track-50.cue";
+  const char *bin_name = "bincue-first-track-50.bin";
+  FILE *cue, *bin;
+  CdIo_t *p_cdio;
+  long i;
+  int ret = 0;
+
+  /* The BIN file is named as cue sheets name it, next to the cue sheet */
+  bin = fopen(bin_name, "wb");
+  if (!bin) {
+    printf("Can't create %s\n", bin_name);
+    return 1;
+  }
+  for (i = 0; i < 20 * CDIO_CD_FRAMESIZE_RAW; i++)
+    fputc(0, bin);
+  fclose(bin);
+  cue = fopen(cue_name, "w");
+  if (!cue) {
+    printf("Can't create %s\n", cue_name);
+    remove(bin_name);
+    return 1;
+  }
+  fprintf(cue, "FILE \"%s\" BINARY\n", bin_name);
+  fprintf(cue, "  TRACK 50 AUDIO\n");
+  fprintf(cue, "    INDEX 01 00:00:00\n");
+  fclose(cue);
+
+  p_cdio = cdio_open_bincue(cue_name);
+  remove(cue_name);
+  if (!p_cdio) {
+    printf("Can't open %s\n", cue_name);
+    remove(bin_name);
+    return 1;
+  }
+
+  if (cdio_get_first_track_num(p_cdio) != 50) {
+    printf("%s first track is %d, not 50\n", cue_name,
+           cdio_get_first_track_num(p_cdio));
+    ret = 1;
+  }
+  if (cdio_lseek(p_cdio, 10 * CDIO_CD_FRAMESIZE_RAW, SEEK_SET) < 0) {
+    printf("Can't seek into the last track of %s\n", cue_name);
+    ret = 1;
+  }
+
+  cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
 /* BIN/CUE images have no sub-channel data and the driver can't run MMC
    commands, so cdio_read_audio_sectors_sub() only reads without it */
 static int
@@ -212,6 +267,8 @@ main(int argc, const char *argv[])
   if (check_no_tracks())
     ret = 1;
   if (check_file_before_first_track())
+    ret = 1;
+  if (check_first_track_not_one())
     ret = 1;
   if (check_read_audio_sectors_sub())
     ret = 1;

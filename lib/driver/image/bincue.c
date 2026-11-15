@@ -125,9 +125,11 @@ _init_bincue(_img_private_t *p_env)
   /* Fake out leadout track and sector count for last track*/
   cdio_lsn_to_msf (lead_lsn, &p_env->tocent[p_env->gen.i_tracks].start_msf);
   p_env->tocent[p_env->gen.i_tracks].start_lba = cdio_lsn_to_lba(lead_lsn);
-  p_env->tocent[p_env->gen.i_tracks - p_env->gen.i_first_track].sec_count =
+  /* tocent[] is indexed from 0 regardless of the first track number,
+     and parse_cuefile() guarantees at least one track. */
+  p_env->tocent[p_env->gen.i_tracks - 1].sec_count =
     cdio_lsn_to_lba(lead_lsn -
-                    p_env->tocent[p_env->gen.i_tracks - p_env->gen.i_first_track].start_lba);
+                    p_env->tocent[p_env->gen.i_tracks - 1].start_lba);
 
   return true;
 }
