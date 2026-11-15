@@ -584,6 +584,59 @@ check_track_formats(void)
   return ret;
 }
 
+/* Write a TOC with an audio track of its own data file, followed by
+   psz_keyword with psz_msf, and check whether it parses and opens */
+static int
+check_msf_toc(const char *psz_keyword, const char *psz_msf, bool b_valid)
+{
+  const char *toc_name = "cdrdao-bad-msf.toc";
+  const char *bin_name = "cdrdao-bad-msf.bin";
+  FILE *toc;
+  CdIo_t *p_cdio;
+  int ret = 0;
+
+  if (write_zeros(bin_name, 4 * CDIO_CD_FRAMESIZE_RAW))
+    return 1;
+  toc = fopen(toc_name, "w");
+  if (!toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    remove(bin_name);
+    return 1;
+  }
+  fprintf(toc, "CD_DA\nTRACK AUDIO\nDATAFILE \"%s\"\n%s %s\n",
+          bin_name, psz_keyword, psz_msf);
+  fclose(toc);
+
+  if (b_valid != cdio_is_tocfile(toc_name)) {
+    fprintf(stderr, "Incorrect: %s %s %s.\n", psz_keyword, psz_msf,
+            b_valid ? "doesn't parse" : "parses");
+    ret = 1;
+  }
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  if (b_valid != (NULL != p_cdio)) {
+    fprintf(stderr, "Incorrect: %s %s %s.\n", psz_keyword, psz_msf,
+            b_valid ? "doesn't open" : "opened");
+    ret = 1;
+  }
+  if (p_cdio)
+    cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
+/* A track keyword given an invalid MSF string must be rejected, and the
+   same TOC with a valid one accepted */
+static int
+check_bad_msf(const char *psz_keyword)
+{
+  int ret = check_msf_toc(psz_keyword, "00:00:00", true);
+
+  if (check_msf_toc(psz_keyword, "xx", false))
+    ret = 1;
+  return ret;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -639,6 +692,9 @@ main(int argc, const char *argv[])
       || check_datafile_mode("MODE2_RAW", 2352))
     ret = 1;
 
+  if (check_bad_msf("START") || check_bad_msf("PREGAP")
+      || check_bad_msf("SILENCE"))
+    ret = 1;
 #ifdef HAVE_CHDIR
       if (0 == chdir(DATA_DIR))
 #endif
