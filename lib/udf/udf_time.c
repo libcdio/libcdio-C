@@ -48,6 +48,7 @@
 #endif
 
 #include "udf_private.h"
+#include <cdio/bytesex.h>
 #include <cdio/udf.h>
 
 /**
@@ -57,9 +58,11 @@
 enum {
   HOURS_PER_DAY    =   24,
   SECS_PER_MINUTE  =   60,
-  MAX_YEAR_SECONDS =   69,
   DAYS_PER_YEAR    =  365,  /* That is, in most of the years. */
   EPOCH_YEAR       = 1970,
+  MIN_YEAR         =    1,  /* ECMA 167 1/7.3.2 */
+  MAX_YEAR         = 9999,
+  MAX_TZ_OFFSET    = 1440,  /* ECMA 167 1/7.3.1, in minutes */
   SECS_PER_HOUR	   = (60 * SECS_PER_MINUTE),
   SECS_PER_DAY	   = SECS_PER_HOUR * HOURS_PER_DAY
 } debug_udf_time_enum;
@@ -71,6 +74,11 @@ enum {
   ((year) % 4 == 0 && ((year) % 100 != 0 || (year) % 400 == 0))
 #endif
 
+/* Division rounded down, and the number of leap years from year 1 to
+   the end of year Y, in the proleptic Gregorian calendar.  */
+#define DIV(a,b) ((a) / (b) - ((a) % (b) < 0))
+#define LEAPS_THRU_END_OF(y) (DIV (y, 4) - DIV (y, 100) + DIV (y, 400))
+
 /* How many days come before each month (0-12).  */
 static const unsigned short int __mon_yday[2][13] =
   {
@@ -80,29 +88,6 @@ static const unsigned short int __mon_yday[2][13] =
     { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, DAYS_PER_YEAR+1 }
   };
 
-#define SPY(y,l,s) (SECS_PER_DAY * (DAYS_PER_YEAR*y+l)+s) /* Seconds per year */
-
-static time_t year_seconds[MAX_YEAR_SECONDS]= {
-  /*1970*/ SPY( 0, 0,0), SPY( 1, 0,0), SPY( 2, 0,0), SPY( 3, 1,0),
-  /*1974*/ SPY( 4, 1,0), SPY( 5, 1,0), SPY( 6, 1,0), SPY( 7, 2,0),
-  /*1978*/ SPY( 8, 2,0), SPY( 9, 2,0), SPY(10, 2,0), SPY(11, 3,0),
-  /*1982*/ SPY(12, 3,0), SPY(13, 3,0), SPY(14, 3,0), SPY(15, 4,0),
-  /*1986*/ SPY(16, 4,0), SPY(17, 4,0), SPY(18, 4,0), SPY(19, 5,0),
-  /*1990*/ SPY(20, 5,0), SPY(21, 5,0), SPY(22, 5,0), SPY(23, 6,0),
-  /*1994*/ SPY(24, 6,0), SPY(25, 6,0), SPY(26, 6,0), SPY(27, 7,0),
-  /*1998*/ SPY(28, 7,0), SPY(29, 7,0), SPY(30, 7,0), SPY(31, 8,0),
-  /*2002*/ SPY(32, 8,0), SPY(33, 8,0), SPY(34, 8,0), SPY(35, 9,0),
-  /*2006*/ SPY(36, 9,0), SPY(37, 9,0), SPY(38, 9,0), SPY(39,10,0),
-  /*2010*/ SPY(40,10,0), SPY(41,10,0), SPY(42,10,0), SPY(43,11,0),
-  /*2014*/ SPY(44,11,0), SPY(45,11,0), SPY(46,11,0), SPY(47,12,0),
-  /*2018*/ SPY(48,12,0), SPY(49,12,0), SPY(50,12,0), SPY(51,13,0),
-  /*2022*/ SPY(52,13,0), SPY(53,13,0), SPY(54,13,0), SPY(55,14,0),
-  /*2026*/ SPY(56,14,0), SPY(57,14,0), SPY(58,14,0), SPY(59,15,0),
-  /*2030*/ SPY(60,15,0), SPY(61,15,0), SPY(62,15,0), SPY(63,16,0),
-  /*2034*/ SPY(64,16,0), SPY(65,16,0), SPY(66,16,0), SPY(67,17,0),
-  /*2038*/ SPY(68,17,0)
-};
-
 #if defined(HAVE_TIMEZONE_VAR) && !defined(_WIN32)
 extern long timezone;
 #endif
@@ -111,81 +96,128 @@ time_t *
 udf_stamp_to_time(time_t *dest, long int *dest_usec,
 		  const udf_timestamp_t src)
 {
-  int yday;
+  int64_t year = src.year;
+  int64_t days, secs;
   uint8_t type = src.type_tz >> 12;
   int16_t offset;
 
+  /* ECMA 167 1/7.3.1: type 0 is UTC, type 1 is local time with an
+     offset from UTC in minutes, and type 2 is subject to agreement, so
+     its time is taken as it is. Types 3 to 15 are reserved. */
+  if (type > 2)
+    goto bad_stamp;
   if (type == 1) {
     offset = src.type_tz << 4;
     /* sign extent offset */
     offset = (offset >> 4);
-    if (offset == -2047) /* unspecified offset */
+    /* -2047 means the offset isn't specified, which OSTA UDF 2.1.4.1
+       says to take as UTC, and so is an offset out of range. */
+    if (offset < -MAX_TZ_OFFSET || offset > MAX_TZ_OFFSET)
       offset = 0;
   }
   else
     offset = 0;
 
-  /* The month indexes __mon_yday[], so reject one out of range along
-     with a bad year or day. */
-  if ((src.year < EPOCH_YEAR) ||
-      (src.year >= EPOCH_YEAR+MAX_YEAR_SECONDS) ||
+  /* The month indexes __mon_yday[], so check it with the other fields
+     against the ranges of ECMA 167 1/7.3.2 to 1/7.3.10. A second of 60,
+     for a leap second, is only allowed with type 2. */
+  if ((year < MIN_YEAR) || (year > MAX_YEAR) ||
       (src.month < 1) || (src.month > 12) ||
-      (src.day < 1) || (src.day > 31))
-    {
-      *dest = -1;
-      *dest_usec = -1;
-      return NULL;
-    }
-  *dest = year_seconds[src.year - EPOCH_YEAR];
-  *dest -= offset * SECS_PER_MINUTE;
+      (src.day < 1) || (src.day > 31) ||
+      (src.hour > 23) || (src.minute > 59) ||
+      (src.second > (type == 2 ? 60 : 59)) ||
+      (src.centiseconds > 99) || (src.hundreds_of_microseconds > 99) ||
+      (src.microseconds > 99))
+    goto bad_stamp;
 
-  yday = ((__mon_yday[__isleap (src.year)]
-	   [src.month-1]) + (src.day-1));
-  *dest += src.second +
-    ( SECS_PER_MINUTE *
-      ( ( (yday* HOURS_PER_DAY) + src.hour ) * 60 + src.minute ) );
+  /* Days from 1 January 1970 to the date, which are negative before
+     it. The arithmetic is done in 64 bits, so it can't overflow for
+     any year from 1 to 9999. */
+  days = (year - EPOCH_YEAR) * DAYS_PER_YEAR
+    + LEAPS_THRU_END_OF (year - 1) - LEAPS_THRU_END_OF (EPOCH_YEAR - 1)
+    + __mon_yday[__isleap (year)][src.month-1] + (src.day-1);
+  secs = ((days * HOURS_PER_DAY + src.hour) * 60 + src.minute)
+    * SECS_PER_MINUTE + src.second
+    - (int64_t) offset * SECS_PER_MINUTE;
+
+  /* Reject a time that doesn't fit in time_t, such as a year after 2038
+     with a 32-bit time_t. */
+  *dest = (time_t) secs;
+  if ((int64_t) *dest != secs)
+    goto bad_stamp;
 
   *dest_usec = src.microseconds
     + (src.centiseconds * 10000)
     + (src.hundreds_of_microseconds * 100);
   return dest;
+
+ bad_stamp:
+  *dest = -1;
+  *dest_usec = -1;
+  return NULL;
 }
 
 #ifdef HAVE_STRUCT_TIMESPEC
+/* Return the offset of local time from UTC at time t, in minutes, or
+   -2047 if it isn't known. */
+static int
+udf_local_offset(time_t t)
+{
+#if defined(HAVE_TM_GMTOFF) && defined(HAVE_LOCALTIME_R)
+  struct tm tm;
+
+  if (localtime_r(&t, &tm))
+    return tm.tm_gmtoff / SECS_PER_MINUTE;
+  return -2047;
+#elif defined(HAVE_TIMEZONE_VAR)
+  (void) t;
+# ifdef HAVE_TZSET
+  tzset();
+# endif
+  /* timezone is in seconds west of UTC. */
+  return -timezone / SECS_PER_MINUTE;
+#else
+  (void) t;
+  return -2047;
+#endif
+}
+
 /**
-  Convert a UDF timestamp to a time_t. If microseconds are desired,
-  use dest_usec. The return value is the same as dest. */
+  Convert a time to a UDF timestamp in local time, recording the time
+  zone offset when it's known, as OSTA UDF 2.1.4.1 requires. The return
+  value is the same as dest, or NULL if dest is NULL, ts.tv_nsec is out
+  of range or the date is outside the years 1 to 9999. */
 udf_timestamp_t *
 udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
 {
-  long int days, rem, y;
+  int64_t secs, days, rem, y;
   const unsigned short int *ip;
-  int16_t offset = 0;
-  int16_t tv_sec;
+  int offset;
+  long int usec;
 
-#ifdef HAVE_TIMEZONE_VAR
-  offset = -timezone;
-#endif
+  if (!dest || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
+    return NULL;
 
-  if (!dest)
-    return dest;
+  /* Reject a time well outside the years 1 to 9999 before adding the
+     offset to it, so the addition can't overflow. The exact limits are
+     checked once the local year is known. */
+  if ((int64_t) ts.tv_sec < INT64_C(-62135596800) - SECS_PER_DAY ||
+      (int64_t) ts.tv_sec > INT64_C(253402300799) + SECS_PER_DAY)
+    return NULL;
 
-  dest->type_tz = 0x1000 | (offset & 0x0FFF);
+  /* With an unknown offset, record UTC, as OSTA UDF 2.1.4.1 says a
+     reader should take an unspecified time zone to be. */
+  offset = udf_local_offset(ts.tv_sec);
+  secs = (int64_t) ts.tv_sec;
+  if (offset != -2047)
+    secs += (int64_t) offset * SECS_PER_MINUTE;
 
-  tv_sec       = ts.tv_sec + (offset * SECS_PER_MINUTE);
-  days         = tv_sec / SECS_PER_DAY;
-  rem          = tv_sec % SECS_PER_DAY;
-  dest->hour   = rem / SECS_PER_HOUR;
-  rem         %= SECS_PER_HOUR;
-  dest->minute = rem / SECS_PER_MINUTE;
-  dest->second = rem % SECS_PER_MINUTE;
-  y            = EPOCH_YEAR;
-
-#define DIV(a,b) ((a) / (b) - ((a) % (b) < 0))
-#define LEAPS_THRU_END_OF(y) (DIV (y, 4) - DIV (y, 100) + DIV (y, 400))
+  days = DIV (secs, SECS_PER_DAY);
+  rem  = secs - days * SECS_PER_DAY;
+  y    = EPOCH_YEAR;
 
   while (days < 0 || days >= (__isleap(y) ? DAYS_PER_YEAR+1 : DAYS_PER_YEAR)) {
-    long int yg = y + days / DAYS_PER_YEAR - (days % DAYS_PER_YEAR < 0);
+    int64_t yg = y + DIV (days, DAYS_PER_YEAR);
 
     /* Adjust DAYS and Y to match the guessed year.  */
     days -= ((yg - y) * DAYS_PER_YEAR
@@ -193,23 +225,47 @@ udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
 	     - LEAPS_THRU_END_OF (y - 1));
     y = yg;
   }
-  dest->year = y;
+  if (y < MIN_YEAR || y > MAX_YEAR)
+    return NULL;
+
+  dest->type_tz = 0x1000 | (offset & 0x0FFF);
+  dest->year    = (udf_Int16_t) y;
   ip = __mon_yday[__isleap(y)];
-  for (y = 11; days < (long int) ip[y]; --y)
+  for (y = 11; days < (int64_t) ip[y]; --y)
     continue;
   days -= ip[y];
-  dest->month = y + 1;
-  dest->day   = days + 1;
+  dest->month  = (udf_Uint8_t) (y + 1);
+  dest->day    = (udf_Uint8_t) (days + 1);
+  dest->hour   = (udf_Uint8_t) (rem / SECS_PER_HOUR);
+  rem         %= SECS_PER_HOUR;
+  dest->minute = (udf_Uint8_t) (rem / SECS_PER_MINUTE);
+  dest->second = (udf_Uint8_t) (rem % SECS_PER_MINUTE);
 
-  dest->centiseconds = ts.tv_nsec / 10000000;
-  dest->hundreds_of_microseconds = ( (ts.tv_nsec / 1000)
-				     - (dest->centiseconds * 10000) ) / 100;
-  dest->microseconds = ( (ts.tv_nsec / 1000)
-			 - (dest->centiseconds * 10000)
-			 - (dest->hundreds_of_microseconds * 100) );
+  usec = ts.tv_nsec / 1000;
+  dest->centiseconds             = (udf_Uint8_t) (usec / 10000);
+  dest->hundreds_of_microseconds = (udf_Uint8_t) (usec / 100 % 100);
+  dest->microseconds             = (udf_Uint8_t) (usec % 100);
   return dest;
 }
 #endif
+
+/**
+  Convert a timestamp read from a File Entry, whose fields are in
+  little-endian order, to a time_t. Return -1 if it isn't valid.
+ */
+static time_t
+udf_fe_stamp_to_time(const udf_timestamp_t *p_stamp)
+{
+  udf_timestamp_t stamp = *p_stamp;
+  time_t ret_time;
+  long int usec;
+
+  stamp.type_tz = uint16_from_le(stamp.type_tz);
+  stamp.year    = (udf_Int16_t) uint16_from_le((uint16_t) stamp.year);
+  if (!udf_stamp_to_time(&ret_time, &usec, stamp))
+    return (time_t) -1;
+  return ret_time;
+}
 
 /**
   Return the modification time of the file.
@@ -217,12 +273,8 @@ udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
 time_t
 udf_get_modification_time(const udf_dirent_t *p_udf_dirent)
 {
-  if (p_udf_dirent) {
-    time_t ret_time;
-    long int usec;
-    udf_stamp_to_time(&ret_time, &usec, p_udf_dirent->fe.modification_time);
-    return ret_time;
-  }
+  if (p_udf_dirent)
+    return udf_fe_stamp_to_time(&p_udf_dirent->fe.modification_time);
   return 0;
 }
 
@@ -232,12 +284,8 @@ udf_get_modification_time(const udf_dirent_t *p_udf_dirent)
 time_t
 udf_get_access_time(const udf_dirent_t *p_udf_dirent)
 {
-  if (p_udf_dirent) {
-    time_t ret_time;
-    long int usec;
-    udf_stamp_to_time(&ret_time, &usec, p_udf_dirent->fe.access_time);
-    return ret_time;
-  }
+  if (p_udf_dirent)
+    return udf_fe_stamp_to_time(&p_udf_dirent->fe.access_time);
   return 0;
 }
 
@@ -247,11 +295,7 @@ udf_get_access_time(const udf_dirent_t *p_udf_dirent)
 time_t
 udf_get_attribute_time(const udf_dirent_t *p_udf_dirent)
 {
-  if (p_udf_dirent) {
-    time_t ret_time;
-    long int usec;
-    udf_stamp_to_time(&ret_time, &usec, p_udf_dirent->fe.attribute_time);
-    return ret_time;
-  }
+  if (p_udf_dirent)
+    return udf_fe_stamp_to_time(&p_udf_dirent->fe.attribute_time);
   return 0;
 }

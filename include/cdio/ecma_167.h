@@ -108,6 +108,7 @@ typedef enum {
 
 typedef uint8_t  udf_Uint8_t;  /** Section 1/7/1.1 */
 typedef uint16_t udf_Uint16_t; /** Section 1/7.1.3 */
+typedef int16_t  udf_Int16_t;  /** Section 1/7.1.4 */
 typedef uint32_t udf_Uint32_t; /** Section 1/7.1.5 */
 typedef uint64_t udf_Uint64_t; /** Section 1/7.1.7 */
 typedef char     udf_dstring;  /** Section 1/7.1.12 */
@@ -129,7 +130,7 @@ typedef struct udf_charspec_s udf_charspec_t;
 struct udf_timestamp_s
 {
   udf_Uint16_t          type_tz;
-  udf_Uint16_t          year;
+  udf_Int16_t           year;
   udf_Uint8_t           month;
   udf_Uint8_t           day;
   udf_Uint8_t           hour;
