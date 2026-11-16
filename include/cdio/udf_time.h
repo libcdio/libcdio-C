@@ -57,22 +57,6 @@ extern "C" {
   time_t udf_get_modification_time(const udf_dirent_t *p_udf_dirent);
 
   /**
-    Return the access timestamp of the file
-  */
-  udf_timestamp_t *udf_get_access_timestamp(const udf_dirent_t *p_udf_dirent);
-
-  /**
-    Return the modification timestamp of the file
-  */
-  udf_timestamp_t *udf_get_modification_timestamp(const udf_dirent_t
-						  *p_udf_dirent);
-
-  /**
-    Return the attr timestamp of the file
-  */
-  udf_timestamp_t *udf_get_attr_timestamp(const udf_dirent_t *p_udf_dirent);
-
-  /**
     Convert a UDF timestamp to a time_t. If microseconds are desired,
     use dest_usec. The return value is the same as dest. */
   time_t *udf_stamp_to_time(time_t *dest, long int *dest_usec,
