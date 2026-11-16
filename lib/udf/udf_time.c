@@ -145,37 +145,66 @@ udf_stamp_to_time(time_t *dest, long int *dest_usec,
 }
 
 #ifdef HAVE_STRUCT_TIMESPEC
+/* Return the offset of local time from UTC at time t, in minutes, or
+   -2047 if it isn't known. */
+static int
+udf_local_offset(time_t t)
+{
+#if defined(HAVE_TM_GMTOFF) && defined(HAVE_LOCALTIME_R)
+  struct tm tm;
+
+  if (localtime_r(&t, &tm))
+    return tm.tm_gmtoff / SECS_PER_MINUTE;
+  return -2047;
+#elif defined(HAVE_TIMEZONE_VAR)
+  (void) t;
+# ifdef HAVE_TZSET
+  tzset();
+# endif
+  /* timezone is in seconds west of UTC. */
+  return -timezone / SECS_PER_MINUTE;
+#else
+  (void) t;
+  return -2047;
+#endif
+}
+
 /**
-  Convert a UDF timestamp to a time_t. If microseconds are desired,
-  use dest_usec. The return value is the same as dest. */
+  Convert a time to a UDF timestamp in local time, recording the time
+  zone offset when it's known, as OSTA UDF 2.1.4.1 requires. The return
+  value is the same as dest, or NULL if dest is NULL, ts.tv_nsec is out
+  of range or the date is outside the years 1 to 9999. */
 udf_timestamp_t *
 udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
 {
-  long int days, rem, y;
+  int64_t secs, days, rem, y;
   const unsigned short int *ip;
-  int16_t offset = 0;
-  int16_t tv_sec;
+  int offset;
+  long int usec;
 
-#ifdef HAVE_TIMEZONE_VAR
-  offset = -timezone;
-#endif
+  if (!dest || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
+    return NULL;
 
-  if (!dest)
-    return dest;
+  /* Reject a time well outside the years 1 to 9999 before adding the
+     offset to it, so the addition can't overflow. The exact limits are
+     checked once the local year is known. */
+  if ((int64_t) ts.tv_sec < INT64_C(-62135596800) - SECS_PER_DAY ||
+      (int64_t) ts.tv_sec > INT64_C(253402300799) + SECS_PER_DAY)
+    return NULL;
 
-  dest->type_tz = 0x1000 | (offset & 0x0FFF);
+  /* With an unknown offset, record UTC, as OSTA UDF 2.1.4.1 says a
+     reader should take an unspecified time zone to be. */
+  offset = udf_local_offset(ts.tv_sec);
+  secs = (int64_t) ts.tv_sec;
+  if (offset != -2047)
+    secs += (int64_t) offset * SECS_PER_MINUTE;
 
-  tv_sec       = ts.tv_sec + (offset * SECS_PER_MINUTE);
-  days         = tv_sec / SECS_PER_DAY;
-  rem          = tv_sec % SECS_PER_DAY;
-  dest->hour   = rem / SECS_PER_HOUR;
-  rem         %= SECS_PER_HOUR;
-  dest->minute = rem / SECS_PER_MINUTE;
-  dest->second = rem % SECS_PER_MINUTE;
-  y            = EPOCH_YEAR;
+  days = DIV (secs, SECS_PER_DAY);
+  rem  = secs - days * SECS_PER_DAY;
+  y    = EPOCH_YEAR;
 
   while (days < 0 || days >= (__isleap(y) ? DAYS_PER_YEAR+1 : DAYS_PER_YEAR)) {
-    long int yg = y + days / DAYS_PER_YEAR - (days % DAYS_PER_YEAR < 0);
+    int64_t yg = y + DIV (days, DAYS_PER_YEAR);
 
     /* Adjust DAYS and Y to match the guessed year.  */
     days -= ((yg - y) * DAYS_PER_YEAR
@@ -183,20 +212,26 @@ udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
 	     - LEAPS_THRU_END_OF (y - 1));
     y = yg;
   }
-  dest->year = y;
+  if (y < MIN_YEAR || y > MAX_YEAR)
+    return NULL;
+
+  dest->type_tz = 0x1000 | (offset & 0x0FFF);
+  dest->year    = (udf_Uint16_t) y;
   ip = __mon_yday[__isleap(y)];
-  for (y = 11; days < (long int) ip[y]; --y)
+  for (y = 11; days < (int64_t) ip[y]; --y)
     continue;
   days -= ip[y];
-  dest->month = y + 1;
-  dest->day   = days + 1;
+  dest->month  = (udf_Uint8_t) (y + 1);
+  dest->day    = (udf_Uint8_t) (days + 1);
+  dest->hour   = (udf_Uint8_t) (rem / SECS_PER_HOUR);
+  rem         %= SECS_PER_HOUR;
+  dest->minute = (udf_Uint8_t) (rem / SECS_PER_MINUTE);
+  dest->second = (udf_Uint8_t) (rem % SECS_PER_MINUTE);
 
-  dest->centiseconds = ts.tv_nsec / 10000000;
-  dest->hundreds_of_microseconds = ( (ts.tv_nsec / 1000)
-				     - (dest->centiseconds * 10000) ) / 100;
-  dest->microseconds = ( (ts.tv_nsec / 1000)
-			 - (dest->centiseconds * 10000)
-			 - (dest->hundreds_of_microseconds * 100) );
+  usec = ts.tv_nsec / 1000;
+  dest->centiseconds             = (udf_Uint8_t) (usec / 10000);
+  dest->hundreds_of_microseconds = (udf_Uint8_t) (usec / 100 % 100);
+  dest->microseconds             = (udf_Uint8_t) (usec % 100);
   return dest;
 }
 #endif

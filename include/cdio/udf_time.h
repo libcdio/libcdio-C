@@ -66,6 +66,12 @@ extern "C" {
   time_t *udf_stamp_to_time(time_t *dest, long int *dest_usec,
 			  const udf_timestamp_t src);
 
+  /**
+    Convert a time to a UDF timestamp in local time, recording the
+    offset of the local time zone from UTC, or -2047 and UTC if the
+    offset isn't known. The return value is the same as dest, or NULL
+    if dest is NULL, ts.tv_nsec is out of range or the date is outside
+    the years 1 to 9999. */
   udf_timestamp_t *udf_timespec_to_stamp(const struct timespec ts,
 					 udf_timestamp_t *dest);
 
