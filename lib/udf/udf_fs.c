@@ -149,7 +149,8 @@ udf_checktag(const udf_tag_t *p_tag, udf_Uint16_t tag_id)
   if (p_tag->id != tag_id)
     return -1;
 
-  for (i = 0; i < 15; i++)
+  /* ECMA 167 3/7.2.3: the sum of bytes 0-3 and 5-15 of the tag. */
+  for (i = 0; i < 16; i++)
     cksum = cksum + itag[i];
   cksum = cksum - itag[4];
 
@@ -157,6 +158,71 @@ udf_checktag(const udf_tag_t *p_tag, udf_Uint16_t tag_id)
     return 0;
 
   return -1;
+}
+
+/* Size of the fixed part of an Extended File Entry (ECMA 167 4/14.17).
+   The fixed part of a File Entry (4/14.9) is UDF_FENTRY_SIZE. */
+#define UDF_EFENTRY_SIZE 216
+
+/*
+ * An Extended File Entry (ECMA 167 4/14.17), which UDF 2.00 and later
+ * record, has the fields of a File Entry (4/14.9) plus an object size,
+ * a creation time and a stream directory ICB, so the fields after the
+ * information length are at other offsets. Convert the Extended File
+ * Entry in p_udf_fe in place to the layout of a File Entry, so that the
+ * rest of the library can use either: move the timestamps, lengths,
+ * extended attributes and allocation descriptors to where a File Entry
+ * has them, drop the extra fields, and make the tag that of a File
+ * Entry.
+ *
+ * Return 0 if p_udf_fe holds a File Entry or an Extended File Entry
+ * that has been converted, 1 if its tag is neither, and -1 if it's an
+ * Extended File Entry whose extended attributes and allocation
+ * descriptors don't fit in the block.
+ */
+static int
+udf_normalize_fe(udf_file_entry_t *p_udf_fe)
+{
+  struct extended_file_entry efe;
+  uint32_t i_extended_attr, i_alloc_descs;
+  uint8_t *itag = (uint8_t *) &p_udf_fe->tag;
+  uint8_t cksum = 0;
+  unsigned int i;
+
+  if (!udf_checktag(&p_udf_fe->tag, TAGID_FILE_ENTRY))
+    return 0;
+  if (udf_checktag(&p_udf_fe->tag, TAGID_EFE))
+    return 1;
+
+  memcpy(&efe, p_udf_fe, sizeof(efe));
+  i_extended_attr = uint32_from_le(efe.length_extended_attr);
+  i_alloc_descs   = uint32_from_le(efe.length_alloc_descs);
+  if (i_extended_attr > UDF_BLOCKSIZE - UDF_EFENTRY_SIZE
+      || i_alloc_descs > UDF_BLOCKSIZE - UDF_EFENTRY_SIZE - i_extended_attr)
+    return -1;
+
+  /* The fields up to the information length are at the same offsets. */
+  p_udf_fe->logblks_recorded  = efe.logblks_recorded;
+  p_udf_fe->access_time       = efe.access_time;
+  p_udf_fe->modification_time = efe.modification_time;
+  p_udf_fe->attribute_time    = efe.attribute_time;
+  p_udf_fe->checkpoint        = efe.checkpoint;
+  p_udf_fe->ext_attr_ICB      = efe.ext_attr_ICB;
+  p_udf_fe->imp_id            = efe.imp_id;
+  p_udf_fe->unique_ID         = efe.unique_ID;
+  p_udf_fe->u_extended_attr   = efe.length_extended_attr;
+  p_udf_fe->u_alloc_descs     = efe.length_alloc_descs;
+  memset(p_udf_fe->u.pad_to_one_block, 0,
+         sizeof(p_udf_fe->u.pad_to_one_block));
+  memcpy(p_udf_fe->u.pad_to_one_block, efe.u.pad_to_one_block,
+         i_extended_attr + i_alloc_descs);
+
+  p_udf_fe->tag.id = uint16_to_le(TAGID_FILE_ENTRY);
+  for (i = 0; i < 16; i++)
+    if (i != 4)
+      cksum = (uint8_t) (cksum + itag[i]);
+  p_udf_fe->tag.cksum = cksum;
+  return 0;
 }
 
 bool
@@ -402,6 +468,7 @@ udf_open (const char *psz_path)
 
   /* Sanity check */
   cdio_assert(sizeof(udf_file_entry_t) == UDF_BLOCKSIZE);
+  cdio_assert(sizeof(struct extended_file_entry) == UDF_BLOCKSIZE);
 
   p_udf->cdio = cdio_open(psz_path, DRIVER_UNKNOWN);
   if (!p_udf->cdio) {
@@ -654,8 +721,7 @@ udf_get_root (udf_t *p_udf, bool b_any_partition, partition_num_t i_partition)
 
       ret = udf_read_sectors(p_udf, p_udf_fe,
 			     p_udf->i_part_start + parent_icb, 1);
-      if (ret == DRIVER_OP_SUCCESS &&
-	  !udf_checktag(&p_udf_fe->tag, TAGID_FILE_ENTRY)) {
+      if (ret == DRIVER_OP_SUCCESS && !udf_normalize_fe(p_udf_fe)) {
 
 	/* Check partition numbers match of last-read block? */
 
@@ -702,8 +768,7 @@ udf_opendir(const udf_dirent_t *p_udf_dirent)
       udf_read_sectors(p_udf, &udf_fe, p_udf->i_part_start
 		       + p_udf_dirent->fid->icb.loc.lba, 1);
 
-    if (DRIVER_OP_SUCCESS == i_ret
-	&& !udf_checktag(&udf_fe.tag, TAGID_FILE_ENTRY)) {
+    if (DRIVER_OP_SUCCESS == i_ret && !udf_normalize_fe(&udf_fe)) {
 
       if (ICBTAG_FILE_TYPE_DIRECTORY == udf_fe.icb_tag.file_type) {
 	udf_dirent_t *p_udf_dirent_new =
@@ -846,8 +911,11 @@ udf_readdir(udf_dirent_t *p_udf_dirent)
       {
 	const unsigned int u_len = p_udf_dirent->fid->i_file_id;
 
+	/* Convert an Extended File Entry. As before, a block that holds
+	   neither kind of entry is kept as it is. */
 	if (DRIVER_OP_SUCCESS != udf_read_sectors(p_udf, &p_udf_dirent->fe, p_udf->i_part_start
-			 + uint32_from_le(p_udf_dirent->fid->icb.loc.lba), 1)) {
+			 + uint32_from_le(p_udf_dirent->fid->icb.loc.lba), 1)
+	    || udf_normalize_fe(&p_udf_dirent->fe) < 0) {
 		udf_dirent_free(p_udf_dirent);
 		return NULL;
 	}
