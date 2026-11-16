@@ -26,7 +26,7 @@ SUBDIRS = data driver
 hack = check_sizeof testassert testgetdevices testischar \
        testisocd testisocd2 testisocd_joliet testiso9660 \
        testisorr testisorr_ce test_lib_driver_util testudf \
-       testudf_ad testpregap
+       testudf_ad testudf_efe testpregap
 
 DATA_DIR       = @abs_top_srcdir@/test/data
 
@@ -49,6 +49,7 @@ testisorr_ce_LDADD    = $(LIBCDIO_LIBS) $(LTLIBICONV)
 testudf_LDADD         = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
 testudf_ad_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/lib/driver -I$(top_srcdir)/lib/udf
 testudf_ad_LDADD      = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
+testudf_efe_LDADD     = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
 
 test_lib_driver_util_LDADD    = $(LIBCDIO_LIBS) $(LTLIBICONV)
 
