@@ -62,6 +62,7 @@ enum {
   EPOCH_YEAR       = 1970,
   MIN_YEAR         =    1,  /* ECMA 167 1/7.3.2 */
   MAX_YEAR         = 9999,
+  MAX_TZ_OFFSET    = 1440,  /* ECMA 167 1/7.3.1, in minutes */
   SECS_PER_HOUR	   = (60 * SECS_PER_MINUTE),
   SECS_PER_DAY	   = SECS_PER_HOUR * HOURS_PER_DAY
 } debug_udf_time_enum;
@@ -100,21 +101,33 @@ udf_stamp_to_time(time_t *dest, long int *dest_usec,
   uint8_t type = src.type_tz >> 12;
   int16_t offset;
 
+  /* ECMA 167 1/7.3.1: type 0 is UTC, type 1 is local time with an
+     offset from UTC in minutes, and type 2 is subject to agreement, so
+     its time is taken as it is. Types 3 to 15 are reserved. */
+  if (type > 2)
+    goto bad_stamp;
   if (type == 1) {
     offset = src.type_tz << 4;
     /* sign extent offset */
     offset = (offset >> 4);
-    if (offset == -2047) /* unspecified offset */
+    /* -2047 means the offset isn't specified, which OSTA UDF 2.1.4.1
+       says to take as UTC, and so is an offset out of range. */
+    if (offset < -MAX_TZ_OFFSET || offset > MAX_TZ_OFFSET)
       offset = 0;
   }
   else
     offset = 0;
 
-  /* The month indexes __mon_yday[], so reject one out of range along
-     with a bad year or day. */
+  /* The month indexes __mon_yday[], so check it with the other fields
+     against the ranges of ECMA 167 1/7.3.2 to 1/7.3.10. A second of 60,
+     for a leap second, is only allowed with type 2. */
   if ((year < MIN_YEAR) || (year > MAX_YEAR) ||
       (src.month < 1) || (src.month > 12) ||
-      (src.day < 1) || (src.day > 31))
+      (src.day < 1) || (src.day > 31) ||
+      (src.hour > 23) || (src.minute > 59) ||
+      (src.second > (type == 2 ? 60 : 59)) ||
+      (src.centiseconds > 99) || (src.hundreds_of_microseconds > 99) ||
+      (src.microseconds > 99))
     goto bad_stamp;
 
   /* Days from 1 January 1970 to the date, which are negative before
@@ -216,7 +229,7 @@ udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
     return NULL;
 
   dest->type_tz = 0x1000 | (offset & 0x0FFF);
-  dest->year    = (udf_Uint16_t) y;
+  dest->year    = (udf_Int16_t) y;
   ip = __mon_yday[__isleap(y)];
   for (y = 11; days < (int64_t) ip[y]; --y)
     continue;
@@ -248,7 +261,7 @@ udf_fe_stamp_to_time(const udf_timestamp_t *p_stamp)
   long int usec;
 
   stamp.type_tz = uint16_from_le(stamp.type_tz);
-  stamp.year    = uint16_from_le(stamp.year);
+  stamp.year    = (udf_Int16_t) uint16_from_le((uint16_t) stamp.year);
   if (!udf_stamp_to_time(&ret_time, &usec, stamp))
     return (time_t) -1;
   return ret_time;

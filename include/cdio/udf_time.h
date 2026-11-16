@@ -60,9 +60,14 @@ extern "C" {
   /**
     Convert a UDF timestamp to a time_t. If microseconds are desired,
     use dest_usec. The return value is the same as dest, or NULL if the
-    timestamp isn't valid (a year outside 1-9999, a month outside 1-12
-    or a day outside 1-31) or the time doesn't fit in a time_t, in which
-    case *dest and *dest_usec are set to -1. */
+    timestamp isn't valid or the time doesn't fit in a time_t, in which
+    case *dest and *dest_usec are set to -1. A timestamp isn't valid if
+    its type is reserved (3 to 15) or a field is out of the range ECMA
+    167 1/7.3 gives it: a year outside 1-9999, a month outside 1-12, a
+    day outside 1-31, an hour above 23, a minute above 59, a second
+    above 59 (60 with type 2), or a fraction of a second above 99. A
+    time zone offset outside -1440 to 1440 minutes is taken as not
+    specified, meaning UTC. */
   time_t *udf_stamp_to_time(time_t *dest, long int *dest_usec,
 			  const udf_timestamp_t src);
 

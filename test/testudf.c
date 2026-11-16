@@ -251,8 +251,8 @@ check_bad_fe_timestamp(void)
 }
 
 /* udf_stamp_to_time() must convert a timestamp for any year from 1 to
-   9999 that fits in a time_t, and reject a year, month or day out of
-   range */
+   9999 that fits in a time_t, apply a valid time zone offset, and reject
+   a reserved type or a field out of range */
 static int
 check_bad_timestamp(void)
 {
@@ -273,19 +273,54 @@ check_bad_timestamp(void)
     {    1,  1,  1, -62135596800 },
     { 9999, 12, 31, 253402214400 },
   };
+  /* Each field and the type at 2000-01-01 00:00:00, which is
+     946684800, with one of them changed. */
   static const struct {
-    uint16_t year;
-    uint8_t month, day;
-  } bad[] = {
-    {     0,   1,   1 },
-    { 10000,   1,   1 },
-    { 65535,   1,   1 },
-    {  2000,   0,   1 },
-    {  2000,  13,   1 },
-    {  2000, 255,   1 },
-    {  2000,   1,   0 },
-    {  2000,   1,  32 },
-    {  2000,   1, 255 },
+    uint16_t type_tz;
+    int16_t year;
+    uint8_t month, day, hour, minute, second, cs, hus, us;
+    int64_t t;    /* -1 if the timestamp must be rejected */
+    long usec;
+  } fields[] = {
+    /* Time zone offsets, which are only used with type 1. -2047 and an
+       offset beyond 1440 minutes are taken as UTC. */
+    { 0x1000 |  120,        2000, 1, 1,  0,  0,  0,   0,   0,   0,
+      946684800 - 7200, 0 },
+    { 0x1000 | (-1440 & 0x0FFF), 2000, 1, 1, 0, 0, 0, 0,   0,   0,
+      946684800 + 86400, 0 },
+    { 0x1000 | (-2047 & 0x0FFF), 2000, 1, 1, 0, 0, 0, 0,   0,   0,
+      946684800, 0 },
+    { 0x1000 | 1441,        2000, 1, 1,  0,  0,  0,   0,   0,   0,
+      946684800, 0 },
+    { 0x0000 |  120,        2000, 1, 1,  0,  0,  0,   0,   0,   0,
+      946684800, 0 },
+    { 0x2000 |  120,        2000, 1, 1,  0,  0,  0,   0,   0,   0,
+      946684800, 0 },
+    /* The largest value of each field, and a leap second with type 2. */
+    { 0x1000,               2000, 1, 1, 23, 59, 59,  99,  99,  99,
+      946684800 + 86399, 999999 },
+    { 0x2000,               2000, 1, 1,  0,  0, 60,   0,   0,   0,
+      946684800 + 60, 0 },
+    /* Out of range. */
+    { 0x3000,               2000, 1, 1,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0xF000,               2000, 1, 1,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,                  0, 1, 1,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,                 -1, 1, 1,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,              10000, 1, 1,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 0, 1,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 13, 1, 0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 255, 1, 0, 0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 0,  0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 32, 0,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 255, 0, 0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 1, 24,  0,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 1,  0, 60,  0,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 1,  0,  0, 60,   0,   0,   0, -1, 0 },
+    { 0x0000,               2000, 1, 1,  0,  0, 60,   0,   0,   0, -1, 0 },
+    { 0x2000,               2000, 1, 1,  0,  0, 61,   0,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 1,  0,  0,  0, 100,   0,   0, -1, 0 },
+    { 0x1000,               2000, 1, 1,  0,  0,  0,   0, 100,   0, -1, 0 },
+    { 0x1000,               2000, 1, 1,  0,  0,  0,   0,   0, 100, -1, 0 },
   };
   udf_timestamp_t stamp;
   time_t t;
@@ -314,24 +349,28 @@ check_bad_timestamp(void)
     }
   }
 
-  /* A time zone offset of +120 minutes moves the time 2 hours back. */
-  stamp.type_tz = 0x1000 | 120;
-  stamp.year = 2000;
-  stamp.month = 1;
-  stamp.day = 1;
-  if (!udf_stamp_to_time(&t, &usec, stamp) || t != 946684800 - 7200) {
-    fprintf(stderr, "Unexpected time for a UDF timestamp at UTC+2\n");
-    return 1;
-  }
-  stamp.type_tz = 0;
+  for (i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+    time_t *p_t;
 
-  for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-    stamp.year = bad[i].year;
-    stamp.month = bad[i].month;
-    stamp.day = bad[i].day;
-    if (udf_stamp_to_time(&t, &usec, stamp) != NULL || t != -1) {
-      fprintf(stderr, "UDF timestamp %u-%02u-%02u accepted\n",
-              bad[i].year, bad[i].month, bad[i].day);
+    stamp.type_tz = fields[i].type_tz;
+    stamp.year = fields[i].year;
+    stamp.month = fields[i].month;
+    stamp.day = fields[i].day;
+    stamp.hour = fields[i].hour;
+    stamp.minute = fields[i].minute;
+    stamp.second = fields[i].second;
+    stamp.centiseconds = fields[i].cs;
+    stamp.hundreds_of_microseconds = fields[i].hus;
+    stamp.microseconds = fields[i].us;
+    p_t = udf_stamp_to_time(&t, &usec, stamp);
+    if (fields[i].t == -1 ? (p_t != NULL || t != -1 || usec != -1)
+        : (!p_t || t != (time_t) fields[i].t || usec != fields[i].usec)) {
+      fprintf(stderr, "UDF timestamp %04x %d-%02u-%02u "
+              "%02u:%02u:%02u.%02u%02u%02u %s\n", fields[i].type_tz,
+              fields[i].year, fields[i].month, fields[i].day,
+              fields[i].hour, fields[i].minute, fields[i].second,
+              fields[i].cs, fields[i].hus, fields[i].us,
+              fields[i].t == -1 ? "accepted" : "converted wrongly");
       return 1;
     }
   }
@@ -381,7 +420,7 @@ check_one_timespec(const char *tz, int64_t tv_sec, long tv_nsec,
       || stamp.hundreds_of_microseconds != tv_nsec / 100000 % 100
       || stamp.microseconds != tv_nsec / 1000 % 100) {
     fprintf(stderr, "udf_timespec_to_stamp(%lld) in %s gave "
-            "%04x %u-%02u-%02u %02u:%02u:%02u.%02u%02u%02u\n",
+            "%04x %d-%02u-%02u %02u:%02u:%02u.%02u%02u%02u\n",
             (long long) tv_sec, tz, stamp.type_tz, stamp.year,
             stamp.month, stamp.day, stamp.hour, stamp.minute,
             stamp.second, stamp.centiseconds,
