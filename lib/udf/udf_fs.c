@@ -149,7 +149,8 @@ udf_checktag(const udf_tag_t *p_tag, udf_Uint16_t tag_id)
   if (p_tag->id != tag_id)
     return -1;
 
-  for (i = 0; i < 15; i++)
+  /* ECMA 167 3/7.2.3: the sum of bytes 0-3 and 5-15 of the tag. */
+  for (i = 0; i < 16; i++)
     cksum = cksum + itag[i];
   cksum = cksum - itag[4];
 

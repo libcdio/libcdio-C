@@ -26,7 +26,7 @@ set_tag(udf_tag_t *tag, uint16_t id)
 
   memset(tag, 0, sizeof(*tag));
   tag->id = id;
-  for (i = 0; i < 15; i++)
+  for (i = 0; i < 16; i++)
     if (i != 4)
       checksum = (uint8_t)(checksum + bytes[i]);
   tag->cksum = checksum;

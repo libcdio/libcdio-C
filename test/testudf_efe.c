@@ -160,10 +160,11 @@ fe_to_efe(uint8_t *block, uint32_t ea_len)
 /* Copy UDF_IMAGE to a temporary file with every File Entry rewritten as
    an Extended File Entry. If bad_ea_len isn't 0, the Extended File
    Entry of the last file is given that length of extended attributes.
-   Return the file's name, which stays valid until the next call, or
-   NULL on error. */
+   If loc_high isn't 0, the top byte of its tag location is set to it,
+   as for a descriptor beyond sector 16777215. Return the file's name,
+   which stays valid until the next call, or NULL on error. */
 static const char *
-write_efe_image(uint32_t bad_ea_len)
+write_efe_image(uint32_t bad_ea_len, uint8_t loc_high)
 {
 #ifdef HAVE_MKSTEMP
   static char psz_tmp[sizeof("libcdio-udf-efe-XXXXXX")];
@@ -214,10 +215,11 @@ write_efe_image(uint32_t bad_ea_len)
     free(image);
     return NULL;
   }
-  if (bad_ea_len) {
+  if (bad_ea_len)
     put32(image + last * UDF_BLOCKSIZE + EFE_LEN_EA, bad_ea_len);
-    set_tag_checksum(image + last * UDF_BLOCKSIZE);
-  }
+  if (loc_high)
+    image[last * UDF_BLOCKSIZE + 15] = loc_high;
+  set_tag_checksum(image + last * UDF_BLOCKSIZE);
 
 #ifdef HAVE_MKSTEMP
   strcpy(psz_tmp, "libcdio-udf-efe-XXXXXX");
@@ -318,7 +320,7 @@ main(void)
     return 1;
   }
 
-  psz_tmp = write_efe_image(0);
+  psz_tmp = write_efe_image(0, 0);
   if (!psz_tmp)
     return 2;
   rc = read_file_info(psz_tmp, &efe_info);
@@ -360,9 +362,28 @@ main(void)
   }
   printf("-- Good! File data matches\n");
 
+  /* The tag checksum covers all of the tag location (ECMA 167 3/7.2.3),
+     so a descriptor beyond sector 16777215, whose location has a top
+     byte that isn't 0, must still be accepted. */
+  psz_tmp = write_efe_image(0, 0x01);
+  if (!psz_tmp)
+    return 11;
+  rc = read_file_info(psz_tmp, &efe_info);
+  remove(psz_tmp);
+  if (rc)
+    return 12;
+  if (efe_info.modification_time != fe_info.modification_time
+      || efe_info.data_size != fe_info.data_size
+      || memcmp(efe_info.data, fe_info.data, fe_info.data_size) != 0) {
+    fprintf(stderr, "Extended File Entry with a tag location beyond "
+            "sector 16777215 misread\n");
+    return 13;
+  }
+  printf("-- Good! Tag checksum covers the whole tag location\n");
+
   /* An Extended File Entry whose extended attributes don't fit in the
      block must be rejected, while the root directory is still read. */
-  psz_tmp = write_efe_image(UDF_BLOCKSIZE);
+  psz_tmp = write_efe_image(UDF_BLOCKSIZE, 0);
   if (!psz_tmp)
     return 7;
   rc = 0;
