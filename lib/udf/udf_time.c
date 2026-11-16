@@ -58,9 +58,10 @@
 enum {
   HOURS_PER_DAY    =   24,
   SECS_PER_MINUTE  =   60,
-  MAX_YEAR_SECONDS =   69,
   DAYS_PER_YEAR    =  365,  /* That is, in most of the years. */
   EPOCH_YEAR       = 1970,
+  MIN_YEAR         =    1,  /* ECMA 167 1/7.3.2 */
+  MAX_YEAR         = 9999,
   SECS_PER_HOUR	   = (60 * SECS_PER_MINUTE),
   SECS_PER_DAY	   = SECS_PER_HOUR * HOURS_PER_DAY
 } debug_udf_time_enum;
@@ -72,6 +73,11 @@ enum {
   ((year) % 4 == 0 && ((year) % 100 != 0 || (year) % 400 == 0))
 #endif
 
+/* Division rounded down, and the number of leap years from year 1 to
+   the end of year Y, in the proleptic Gregorian calendar.  */
+#define DIV(a,b) ((a) / (b) - ((a) % (b) < 0))
+#define LEAPS_THRU_END_OF(y) (DIV (y, 4) - DIV (y, 100) + DIV (y, 400))
+
 /* How many days come before each month (0-12).  */
 static const unsigned short int __mon_yday[2][13] =
   {
@@ -81,29 +87,6 @@ static const unsigned short int __mon_yday[2][13] =
     { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, DAYS_PER_YEAR+1 }
   };
 
-#define SPY(y,l,s) (SECS_PER_DAY * (DAYS_PER_YEAR*y+l)+s) /* Seconds per year */
-
-static time_t year_seconds[MAX_YEAR_SECONDS]= {
-  /*1970*/ SPY( 0, 0,0), SPY( 1, 0,0), SPY( 2, 0,0), SPY( 3, 1,0),
-  /*1974*/ SPY( 4, 1,0), SPY( 5, 1,0), SPY( 6, 1,0), SPY( 7, 2,0),
-  /*1978*/ SPY( 8, 2,0), SPY( 9, 2,0), SPY(10, 2,0), SPY(11, 3,0),
-  /*1982*/ SPY(12, 3,0), SPY(13, 3,0), SPY(14, 3,0), SPY(15, 4,0),
-  /*1986*/ SPY(16, 4,0), SPY(17, 4,0), SPY(18, 4,0), SPY(19, 5,0),
-  /*1990*/ SPY(20, 5,0), SPY(21, 5,0), SPY(22, 5,0), SPY(23, 6,0),
-  /*1994*/ SPY(24, 6,0), SPY(25, 6,0), SPY(26, 6,0), SPY(27, 7,0),
-  /*1998*/ SPY(28, 7,0), SPY(29, 7,0), SPY(30, 7,0), SPY(31, 8,0),
-  /*2002*/ SPY(32, 8,0), SPY(33, 8,0), SPY(34, 8,0), SPY(35, 9,0),
-  /*2006*/ SPY(36, 9,0), SPY(37, 9,0), SPY(38, 9,0), SPY(39,10,0),
-  /*2010*/ SPY(40,10,0), SPY(41,10,0), SPY(42,10,0), SPY(43,11,0),
-  /*2014*/ SPY(44,11,0), SPY(45,11,0), SPY(46,11,0), SPY(47,12,0),
-  /*2018*/ SPY(48,12,0), SPY(49,12,0), SPY(50,12,0), SPY(51,13,0),
-  /*2022*/ SPY(52,13,0), SPY(53,13,0), SPY(54,13,0), SPY(55,14,0),
-  /*2026*/ SPY(56,14,0), SPY(57,14,0), SPY(58,14,0), SPY(59,15,0),
-  /*2030*/ SPY(60,15,0), SPY(61,15,0), SPY(62,15,0), SPY(63,16,0),
-  /*2034*/ SPY(64,16,0), SPY(65,16,0), SPY(66,16,0), SPY(67,17,0),
-  /*2038*/ SPY(68,17,0)
-};
-
 #if defined(HAVE_TIMEZONE_VAR) && !defined(_WIN32)
 extern long timezone;
 #endif
@@ -112,7 +95,8 @@ time_t *
 udf_stamp_to_time(time_t *dest, long int *dest_usec,
 		  const udf_timestamp_t src)
 {
-  int yday;
+  int64_t year = src.year;
+  int64_t days, secs;
   uint8_t type = src.type_tz >> 12;
   int16_t offset;
 
@@ -128,28 +112,36 @@ udf_stamp_to_time(time_t *dest, long int *dest_usec,
 
   /* The month indexes __mon_yday[], so reject one out of range along
      with a bad year or day. */
-  if ((src.year < EPOCH_YEAR) ||
-      (src.year >= EPOCH_YEAR+MAX_YEAR_SECONDS) ||
+  if ((year < MIN_YEAR) || (year > MAX_YEAR) ||
       (src.month < 1) || (src.month > 12) ||
       (src.day < 1) || (src.day > 31))
-    {
-      *dest = -1;
-      *dest_usec = -1;
-      return NULL;
-    }
-  *dest = year_seconds[src.year - EPOCH_YEAR];
-  *dest -= offset * SECS_PER_MINUTE;
+    goto bad_stamp;
 
-  yday = ((__mon_yday[__isleap (src.year)]
-	   [src.month-1]) + (src.day-1));
-  *dest += src.second +
-    ( SECS_PER_MINUTE *
-      ( ( (yday* HOURS_PER_DAY) + src.hour ) * 60 + src.minute ) );
+  /* Days from 1 January 1970 to the date, which are negative before
+     it. The arithmetic is done in 64 bits, so it can't overflow for
+     any year from 1 to 9999. */
+  days = (year - EPOCH_YEAR) * DAYS_PER_YEAR
+    + LEAPS_THRU_END_OF (year - 1) - LEAPS_THRU_END_OF (EPOCH_YEAR - 1)
+    + __mon_yday[__isleap (year)][src.month-1] + (src.day-1);
+  secs = ((days * HOURS_PER_DAY + src.hour) * 60 + src.minute)
+    * SECS_PER_MINUTE + src.second
+    - (int64_t) offset * SECS_PER_MINUTE;
+
+  /* Reject a time that doesn't fit in time_t, such as a year after 2038
+     with a 32-bit time_t. */
+  *dest = (time_t) secs;
+  if ((int64_t) *dest != secs)
+    goto bad_stamp;
 
   *dest_usec = src.microseconds
     + (src.centiseconds * 10000)
     + (src.hundreds_of_microseconds * 100);
   return dest;
+
+ bad_stamp:
+  *dest = -1;
+  *dest_usec = -1;
+  return NULL;
 }
 
 #ifdef HAVE_STRUCT_TIMESPEC
@@ -181,9 +173,6 @@ udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
   dest->minute = rem / SECS_PER_MINUTE;
   dest->second = rem % SECS_PER_MINUTE;
   y            = EPOCH_YEAR;
-
-#define DIV(a,b) ((a) / (b) - ((a) % (b) < 0))
-#define LEAPS_THRU_END_OF(y) (DIV (y, 4) - DIV (y, 100) + DIV (y, 400))
 
   while (days < 0 || days >= (__isleap(y) ? DAYS_PER_YEAR+1 : DAYS_PER_YEAR)) {
     long int yg = y + days / DAYS_PER_YEAR - (days % DAYS_PER_YEAR < 0);

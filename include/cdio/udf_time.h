@@ -40,25 +40,29 @@ extern "C" {
 
   /**
     Return the access time of the file, or -1 if the timestamp isn't
-    valid.
+    valid or doesn't fit in a time_t.
   */
   time_t udf_get_access_time(const udf_dirent_t *p_udf_dirent);
 
   /**
     Return the attribute (most recent create or access) time of the
-    file, or -1 if the timestamp isn't valid.
+    file, or -1 if the timestamp isn't valid or doesn't fit in a
+    time_t.
   */
   time_t udf_get_attribute_time(const udf_dirent_t *p_udf_dirent);
 
   /**
     Return the modification time of the file, or -1 if the timestamp
-    isn't valid.
+    isn't valid or doesn't fit in a time_t.
   */
   time_t udf_get_modification_time(const udf_dirent_t *p_udf_dirent);
 
   /**
     Convert a UDF timestamp to a time_t. If microseconds are desired,
-    use dest_usec. The return value is the same as dest. */
+    use dest_usec. The return value is the same as dest, or NULL if the
+    timestamp isn't valid (a year outside 1-9999, a month outside 1-12
+    or a day outside 1-31) or the time doesn't fit in a time_t, in which
+    case *dest and *dest_usec are set to -1. */
   time_t *udf_stamp_to_time(time_t *dest, long int *dest_usec,
 			  const udf_timestamp_t src);
 

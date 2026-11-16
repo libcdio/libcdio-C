@@ -248,18 +248,42 @@ check_bad_fe_timestamp(void)
   return rc;
 }
 
-/* udf_stamp_to_time() must reject a month or day out of range */
+/* udf_stamp_to_time() must convert a timestamp for any year from 1 to
+   9999 that fits in a time_t, and reject a year, month or day out of
+   range */
 static int
 check_bad_timestamp(void)
 {
-  static const uint8_t bad[][2] = {
-    /* month, day */
-    {  0,  1 },
-    { 13,  1 },
-    { 255, 1 },
-    {  1,  0 },
-    {  1, 32 },
-    {  1, 255 },
+  static const struct {
+    uint16_t year;
+    uint8_t month, day;
+    int64_t t;
+  } good[] = {
+    { 1970,  1,  1,            0 },
+    { 1969, 12, 31,       -86400 },
+    { 1901, 12, 14,  -2147472000 },
+    { 2000,  2, 29,    951782400 },
+    { 2038,  1, 19,   2147472000 },
+    /* These need a 64-bit time_t. */
+    { 2039,  1,  1,   2177452800 },
+    { 2100,  3,  1,   4107542400 },
+    { 1600,  2, 29, -11670998400 },
+    {    1,  1,  1, -62135596800 },
+    { 9999, 12, 31, 253402214400 },
+  };
+  static const struct {
+    uint16_t year;
+    uint8_t month, day;
+  } bad[] = {
+    {     0,   1,   1 },
+    { 10000,   1,   1 },
+    { 65535,   1,   1 },
+    {  2000,   0,   1 },
+    {  2000,  13,   1 },
+    {  2000, 255,   1 },
+    {  2000,   1,   0 },
+    {  2000,   1,  32 },
+    {  2000,   1, 255 },
   };
   udf_timestamp_t stamp;
   time_t t;
@@ -267,20 +291,45 @@ check_bad_timestamp(void)
   unsigned int i;
 
   memset(&stamp, 0, sizeof(stamp));
-  stamp.year = 2000;
-  stamp.month = 2;
-  stamp.day = 29;
-  if (!udf_stamp_to_time(&t, &usec, stamp) || t != 951782400) {
-    fprintf(stderr, "Unexpected time for a valid UDF timestamp\n");
-    return 1;
+  for (i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+    const time_t expected = (time_t) good[i].t;
+
+    stamp.year = good[i].year;
+    stamp.month = good[i].month;
+    stamp.day = good[i].day;
+    if ((int64_t) expected != good[i].t) {
+      /* Doesn't fit in this time_t, so it must be rejected. */
+      if (udf_stamp_to_time(&t, &usec, stamp) != NULL || t != -1) {
+        fprintf(stderr, "UDF timestamp %u-%02u-%02u accepted with a "
+                "%u-bit time_t\n", good[i].year, good[i].month,
+                good[i].day, (unsigned int) (8 * sizeof(time_t)));
+        return 1;
+      }
+    } else if (!udf_stamp_to_time(&t, &usec, stamp) || t != expected) {
+      fprintf(stderr, "Unexpected time for UDF timestamp %u-%02u-%02u\n",
+              good[i].year, good[i].month, good[i].day);
+      return 1;
+    }
   }
 
+  /* A time zone offset of +120 minutes moves the time 2 hours back. */
+  stamp.type_tz = 0x1000 | 120;
+  stamp.year = 2000;
+  stamp.month = 1;
+  stamp.day = 1;
+  if (!udf_stamp_to_time(&t, &usec, stamp) || t != 946684800 - 7200) {
+    fprintf(stderr, "Unexpected time for a UDF timestamp at UTC+2\n");
+    return 1;
+  }
+  stamp.type_tz = 0;
+
   for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-    stamp.month = bad[i][0];
-    stamp.day = bad[i][1];
+    stamp.year = bad[i].year;
+    stamp.month = bad[i].month;
+    stamp.day = bad[i].day;
     if (udf_stamp_to_time(&t, &usec, stamp) != NULL || t != -1) {
-      fprintf(stderr, "UDF timestamp with month %u, day %u accepted\n",
-              bad[i][0], bad[i][1]);
+      fprintf(stderr, "UDF timestamp %u-%02u-%02u accepted\n",
+              bad[i].year, bad[i].month, bad[i].day);
       return 1;
     }
   }
