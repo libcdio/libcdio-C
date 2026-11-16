@@ -50,6 +50,75 @@
 #define EXPECTED_NAME    "FéжΘvrier"
 #define EXPECTED_LENGTH  10
 
+#define EXPECTED_MTIME   1392859512 /* 2014-02-20 01:25:12 UTC */
+
+/* Read all of UDF_IMAGE. Return NULL on error. */
+static uint8_t *
+read_image(long *p_size)
+{
+  FILE *fp;
+  uint8_t *image;
+  long size;
+
+  fp = fopen(UDF_IMAGE, "rb");
+  if (!fp)
+    return NULL;
+  if (fseek(fp, 0, SEEK_END) || (size = ftell(fp)) <= 0
+      || fseek(fp, 0, SEEK_SET)) {
+    fclose(fp);
+    return NULL;
+  }
+  image = malloc(size);
+  if (!image || fread(image, 1, size, fp) != (size_t) size) {
+    free(image);
+    fclose(fp);
+    return NULL;
+  }
+  fclose(fp);
+  *p_size = size;
+  return image;
+}
+
+/* Write image to a temporary file and free it. Return the file's name,
+   which stays valid until the next call, or NULL on error. */
+static const char *
+write_temp_image(uint8_t *image, long size)
+{
+#ifdef HAVE_MKSTEMP
+  static char psz_tmp[sizeof("libcdio-udf-XXXXXX")];
+  int fd;
+#else
+  const char *psz_tmp;
+#endif
+  FILE *fp;
+
+#ifdef HAVE_MKSTEMP
+  strcpy(psz_tmp, "libcdio-udf-XXXXXX");
+  fd = mkstemp(psz_tmp);
+  fp = fd < 0 ? NULL : fdopen(fd, "wb");
+  if (!fp && fd >= 0) {
+    close(fd);
+    remove(psz_tmp);
+  }
+#else
+  psz_tmp = tmpnam(NULL);
+  fp = psz_tmp ? fopen(psz_tmp, "wb") : NULL;
+#endif
+  if (!fp) {
+    free(image);
+    return NULL;
+  }
+  if (fwrite(image, 1, size, fp) != (size_t) size) {
+    fclose(fp);
+    remove(psz_tmp);
+    free(image);
+    return NULL;
+  }
+  fclose(fp);
+  free(image);
+  return psz_tmp;
+}
+
 /* Copy UDF_IMAGE to a temporary file, with the length byte of every
    Logical Volume Descriptor's identifier set to 0xff and its compression
    ID set to comp_id, and get the logical volume ID from it. The length
@@ -59,13 +128,7 @@ static int
 check_logvol_id_length(uint8_t comp_id, const char *psz_expected)
 {
   char volume_id[192];
-#ifdef HAVE_MKSTEMP
-  char psz_tmp[] = "libcdio-udf-XXXXXX";
-  int fd;
-#else
   const char *psz_tmp;
-#endif
-  FILE *fp;
   uint8_t *image;
   long size, lba;
   unsigned int patched = 0;
@@ -73,21 +136,9 @@ check_logvol_id_length(uint8_t comp_id, const char *psz_expected)
   udf_dirent_t *p_udf_root;
   int len, rc = 1;
 
-  fp = fopen(UDF_IMAGE, "rb");
-  if (!fp)
+  image = read_image(&size);
+  if (!image)
     return 1;
-  if (fseek(fp, 0, SEEK_END) || (size = ftell(fp)) <= 0
-      || fseek(fp, 0, SEEK_SET)) {
-    fclose(fp);
-    return 1;
-  }
-  image = malloc(size);
-  if (!image || fread(image, 1, size, fp) != (size_t) size) {
-    free(image);
-    fclose(fp);
-    return 1;
-  }
-  fclose(fp);
 
   for (lba = 0; (lba + 1) * UDF_BLOCKSIZE <= size; lba++) {
     logical_vol_desc_t *p_lvd = (logical_vol_desc_t *)
@@ -108,29 +159,9 @@ check_logvol_id_length(uint8_t comp_id, const char *psz_expected)
     return 1;
   }
 
-#ifdef HAVE_MKSTEMP
-  fd = mkstemp(psz_tmp);
-  fp = fd < 0 ? NULL : fdopen(fd, "wb");
-  if (!fp && fd >= 0) {
-    close(fd);
-    remove(psz_tmp);
-  }
-#else
-  psz_tmp = tmpnam(NULL);
-  fp = psz_tmp ? fopen(psz_tmp, "wb") : NULL;
-#endif
-  if (!fp) {
-    free(image);
+  psz_tmp = write_temp_image(image, size);
+  if (!psz_tmp)
     return 1;
-  }
-  if (fwrite(image, 1, size, fp) != (size_t) size) {
-    fclose(fp);
-    remove(psz_tmp);
-    free(image);
-    return 1;
-  }
-  fclose(fp);
-  free(image);
 
   p_udf = udf_open(psz_tmp);
   if (p_udf) {
@@ -143,6 +174,72 @@ check_logvol_id_length(uint8_t comp_id, const char *psz_expected)
         fprintf(stderr, "Unexpected logical volume ID '%s'\n", volume_id);
       else
         rc = 0;
+      udf_dirent_free(p_udf_root);
+    }
+    udf_close(p_udf);
+  }
+  remove(psz_tmp);
+  return rc;
+}
+
+/* Copy UDF_IMAGE to a temporary file, with the month of the
+   modification time of every File Entry set to 13.
+   udf_get_modification_time() must return -1 for the expected file, and
+   the access time, which isn't changed, must still be read. */
+static int
+check_bad_fe_timestamp(void)
+{
+  const char *psz_tmp;
+  uint8_t *image;
+  long size, lba;
+  unsigned int patched = 0;
+  udf_t *p_udf;
+  udf_dirent_t *p_udf_root, *p_udf_file;
+  time_t t;
+  int rc = 1;
+
+  image = read_image(&size);
+  if (!image)
+    return 1;
+
+  for (lba = 0; (lba + 1) * UDF_BLOCKSIZE <= size; lba++) {
+    udf_file_entry_t *p_fe = (udf_file_entry_t *)
+      (image + lba * UDF_BLOCKSIZE);
+    const uint8_t *tag = (const uint8_t *) &p_fe->tag;
+
+    if (tag[0] == (TAGID_FILE_ENTRY & 0xff)
+        && tag[1] == TAGID_FILE_ENTRY >> 8) {
+      p_fe->modification_time.month = 13;
+      patched++;
+    }
+  }
+  if (!patched) {
+    fprintf(stderr, "No File Entry in %s\n", UDF_IMAGE);
+    free(image);
+    return 1;
+  }
+
+  psz_tmp = write_temp_image(image, size);
+  if (!psz_tmp)
+    return 1;
+
+  p_udf = udf_open(psz_tmp);
+  if (p_udf) {
+    p_udf_root = udf_get_root(p_udf, true, 0);
+    if (p_udf_root) {
+      p_udf_file = udf_fopen(p_udf_root, EXPECTED_NAME);
+      if (!p_udf_file)
+        fprintf(stderr, "Could not locate expected file in UDF image\n");
+      else {
+        if ((t = udf_get_modification_time(p_udf_file)) != (time_t) -1)
+          fprintf(stderr, "Modification time in month 13 read as %ld\n",
+                  (long) t);
+        else if (udf_get_access_time(p_udf_file) == (time_t) -1)
+          fprintf(stderr, "Valid access time not read\n");
+        else
+          rc = 0;
+        udf_dirent_free(p_udf_file);
+      }
       udf_dirent_free(p_udf_root);
     }
     udf_close(p_udf);
@@ -239,6 +336,13 @@ main(int argc, const char *argv[])
   }
   printf("-- Good! File length matches expected length\n");
 
+  if (udf_get_modification_time(p_udf_file) != EXPECTED_MTIME) {
+    fprintf(stderr, "Unexpected UDF modification time\n");
+    rc=8;
+    goto exit;
+  }
+  printf("-- Good! Modification time matches expected time\n");
+
   if (check_logvol_id_length(16, EXPECTED_NAME)
       || check_logvol_id_length(8, NULL)) {
     fprintf(stderr, "Mishandled an oversized logical volume ID length\n");
@@ -252,6 +356,12 @@ main(int argc, const char *argv[])
     goto exit;
   }
   printf("-- Good! Invalid UDF timestamps are rejected\n");
+
+  if (check_bad_fe_timestamp()) {
+    rc=9;
+    goto exit;
+  }
+  printf("-- Good! Invalid File Entry timestamp read as -1\n");
 
  exit:
   if (p_udf_root != NULL)

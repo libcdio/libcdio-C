@@ -48,6 +48,7 @@
 #endif
 
 #include "udf_private.h"
+#include <cdio/bytesex.h>
 #include <cdio/udf.h>
 
 /**
@@ -212,17 +213,31 @@ udf_timespec_to_stamp(const struct timespec ts, udf_timestamp_t *dest)
 #endif
 
 /**
+  Convert a timestamp read from a File Entry, whose fields are in
+  little-endian order, to a time_t. Return -1 if it isn't valid.
+ */
+static time_t
+udf_fe_stamp_to_time(const udf_timestamp_t *p_stamp)
+{
+  udf_timestamp_t stamp = *p_stamp;
+  time_t ret_time;
+  long int usec;
+
+  stamp.type_tz = uint16_from_le(stamp.type_tz);
+  stamp.year    = uint16_from_le(stamp.year);
+  if (!udf_stamp_to_time(&ret_time, &usec, stamp))
+    return (time_t) -1;
+  return ret_time;
+}
+
+/**
   Return the modification time of the file.
  */
 time_t
 udf_get_modification_time(const udf_dirent_t *p_udf_dirent)
 {
-  if (p_udf_dirent) {
-    time_t ret_time;
-    long int usec;
-    udf_stamp_to_time(&ret_time, &usec, p_udf_dirent->fe.modification_time);
-    return ret_time;
-  }
+  if (p_udf_dirent)
+    return udf_fe_stamp_to_time(&p_udf_dirent->fe.modification_time);
   return 0;
 }
 
@@ -232,12 +247,8 @@ udf_get_modification_time(const udf_dirent_t *p_udf_dirent)
 time_t
 udf_get_access_time(const udf_dirent_t *p_udf_dirent)
 {
-  if (p_udf_dirent) {
-    time_t ret_time;
-    long int usec;
-    udf_stamp_to_time(&ret_time, &usec, p_udf_dirent->fe.access_time);
-    return ret_time;
-  }
+  if (p_udf_dirent)
+    return udf_fe_stamp_to_time(&p_udf_dirent->fe.access_time);
   return 0;
 }
 
@@ -247,11 +258,7 @@ udf_get_access_time(const udf_dirent_t *p_udf_dirent)
 time_t
 udf_get_attribute_time(const udf_dirent_t *p_udf_dirent)
 {
-  if (p_udf_dirent) {
-    time_t ret_time;
-    long int usec;
-    udf_stamp_to_time(&ret_time, &usec, p_udf_dirent->fe.attribute_time);
-    return ret_time;
-  }
+  if (p_udf_dirent)
+    return udf_fe_stamp_to_time(&p_udf_dirent->fe.attribute_time);
   return 0;
 }

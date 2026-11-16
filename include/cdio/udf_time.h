@@ -39,17 +39,20 @@ extern "C" {
 #endif /* __cplusplus */
 
   /**
-    Return the access time of the file.
+    Return the access time of the file, or -1 if the timestamp isn't
+    valid.
   */
   time_t udf_get_access_time(const udf_dirent_t *p_udf_dirent);
 
   /**
-    Return the attribute (most recent create or access) time of the file
+    Return the attribute (most recent create or access) time of the
+    file, or -1 if the timestamp isn't valid.
   */
   time_t udf_get_attribute_time(const udf_dirent_t *p_udf_dirent);
 
   /**
-    Return the modification time of the file.
+    Return the modification time of the file, or -1 if the timestamp
+    isn't valid.
   */
   time_t udf_get_modification_time(const udf_dirent_t *p_udf_dirent);
 
