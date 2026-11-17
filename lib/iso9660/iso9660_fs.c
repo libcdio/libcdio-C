@@ -1189,10 +1189,12 @@ _fs_stat_traverse (const CdIo_t *p_cdio, const iso9660_stat_t *_root,
       p_stat = calloc(1, len);
       cdio_assert (p_stat != NULL);
       memcpy(p_stat, _root, len);
-      p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
-      cdio_assert (p_stat->rr.psz_symlink != NULL);
-      memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
-	     p_stat->rr.i_symlink_max);
+      if (_root->rr.psz_symlink != NULL) {
+	p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
+	cdio_assert (p_stat->rr.psz_symlink != NULL);
+	memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
+	       p_stat->rr.i_symlink_max);
+      }
       return p_stat;
     }
 
@@ -1304,10 +1306,12 @@ _fs_iso_stat_traverse (iso9660_t *p_iso, const iso9660_stat_t *_root,
       p_stat = calloc(1, len);
       cdio_assert (p_stat != NULL);
       memcpy(p_stat, _root, len);
-      p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
-      cdio_assert (p_stat->rr.psz_symlink != NULL);
-      memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
-	     p_stat->rr.i_symlink_max);
+      if (_root->rr.psz_symlink != NULL) {
+	p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
+	cdio_assert (p_stat->rr.psz_symlink != NULL);
+	memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
+	       p_stat->rr.i_symlink_max);
+      }
       return p_stat;
     }
 
