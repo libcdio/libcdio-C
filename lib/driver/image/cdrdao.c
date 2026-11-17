@@ -1094,6 +1094,9 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	   psz_cue_name, i_line, psz_keyword);
 
  err_exit:
+  /* Let the caller free the tracks read so far */
+  if (NULL != cd)
+    cd->gen.i_tracks = i_track+1;
   fclose (fp);
   return false;
 }
