@@ -397,6 +397,8 @@ repeat:
 	    cdio_warn("Could not get Rock Ridge deep directory child");
 	    break;
 	  }
+	  /* p_stat takes the target's symlink below: free its own. */
+	  free(p_stat->rr.psz_symlink);
 	  memcpy(p_stat, target, sizeof(iso9660_stat_t));
 	  /* Prevent the symlink from being freed on the duplicated struct */
 	  target->rr.psz_symlink = NULL;

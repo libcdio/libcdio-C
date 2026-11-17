@@ -1802,6 +1802,8 @@ find_lsn_recurse (void *p_image, iso9660_readdir_t iso9660_readdir,
 	    return NULL;
 	  }
 	memcpy(ret_stat, statbuf, len2);
+	/* ret_stat now owns the symlink: don't free it with the list. */
+	statbuf->rr.psz_symlink = NULL;
 	iso9660_filelist_free (entlist);
 	iso9660_dirlist_free(dirlist);
 	return ret_stat;
