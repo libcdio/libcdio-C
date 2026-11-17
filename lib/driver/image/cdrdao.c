@@ -304,6 +304,19 @@ get_disc_last_lsn_cdrdao (void *p_user_data)
 	   psz_cue_name, i_line, psz_keyword)
 
 
+/* Free the file a track read so far, when FILE or DATAFILE is given
+   again for the same track */
+static void
+free_track_file(track_info_t *p_tocent)
+{
+  free(p_tocent->filename);
+  p_tocent->filename = NULL;
+  if (p_tocent->data_source) {
+    cdio_stdio_destroy(p_tocent->data_source);
+    p_tocent->data_source = NULL;
+  }
+}
+
 static bool
 parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 {
@@ -380,7 +393,10 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 		    goto err_exit;
 		}
 	      }
-	      if (NULL != cd) cd->psz_mcn = strdup (psz_field);
+	      if (NULL != cd) {
+		free(cd->psz_mcn);
+		cd->psz_mcn = strdup (psz_field);
+	      }
 	    }
 	  } else {
 	    cdio_log(log_level,
@@ -709,8 +725,10 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	if (i_track < 0)
 	  goto not_in_global_section;
 	if (NULL != (psz_field = strtok_r(NULL, "\"\t\n\r", &saveptr))) {
-	  if (NULL != cd)
+	  if (NULL != cd) {
+	    free(cd->tocent[i_track].isrc);
 	    cd->tocent[i_track].isrc = strdup(psz_field);
+	  }
 	} else {
 	  goto format_error;
 	}
@@ -748,6 +766,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    char *psz_filename = cdio_abspath(psz_dirname, psz_field);
 	    free(psz_dirname);
 	    if (cd) {
+	      free_track_file(&cd->tocent[i_track]);
 	      cd->tocent[i_track].filename = strdup (psz_filename);
 	      /* To do: do something about reusing existing files. */
 	      if (!(cd->tocent[i_track].data_source = cdio_stdio_new (psz_filename))) {
@@ -827,6 +846,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    char *psz_dirname = cdio_dirname(psz_cue_name);
 	    char *psz_filename = cdio_abspath(psz_dirname, psz_field);
 	    if (cd) {
+	      free_track_file(&cd->tocent[i_track]);
 	      cd->tocent[i_track].filename = strdup(psz_filename);
 	      /* To do: do something about reusing existing files. */
 	      if (!(cd->tocent[i_track].data_source = cdio_stdio_new (psz_filename))) {
