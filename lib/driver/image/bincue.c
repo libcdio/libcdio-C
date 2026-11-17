@@ -367,7 +367,10 @@ parse_cuefile (_img_private_t *cd, const char *psz_cue_name)
             }
           }
 
-          if (cd) cd->psz_mcn = strdup (psz_field);
+          if (cd) {
+            free(cd->psz_mcn);
+            cd->psz_mcn = strdup (psz_field);
+          }
           if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
             goto format_error;
           }
@@ -461,9 +464,13 @@ parse_cuefile (_img_private_t *cd, const char *psz_cue_name)
           char *dirname = cdio_dirname(psz_cue_name);
           char *filename = cdio_abspath(dirname, psz_field);
           if (cd) {
+            /* The "source" argument and an earlier FILE are replaced */
+            free(cd->gen.source_name);
             cd->gen.source_name = strdup(filename);
-            if (i >= 0)
+            if (i >= 0) {
+              free(cd->tocent[i].filename);
               cd->tocent[i].filename = strdup(filename);
+            }
           }
           free(filename);
           free(dirname);
@@ -772,7 +779,10 @@ parse_cuefile (_img_private_t *cd, const char *psz_cue_name)
       } else if (0 == strcmp("ISRC", psz_keyword)) {
         if (0 <= i) {
           if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
-            if (cd) cd->tocent[i].isrc = strdup (psz_field);
+            if (cd) {
+              free(cd->tocent[i].isrc);
+              cd->tocent[i].isrc = strdup (psz_field);
+            }
           } else {
             goto format_error;
           }
