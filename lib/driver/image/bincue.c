@@ -289,6 +289,7 @@ parse_cuefile (_img_private_t *cd, const char *psz_cue_name)
   unsigned int i_line=0;            /* line number in file of psz_line. */
   int          i = -1;              /* Position in tocent. Same as
 				       cd->gen.i_tracks - 1 */
+  int          i_first_track = 1;   /* Number of the first track */
   char *psz_keyword, *psz_field, *psz_cue_name_dup;
   cdio_log_level_t log_level = (NULL == cd) ? CDIO_LOG_INFO : CDIO_LOG_WARN;
   cdtext_field_t cdtext_key;
@@ -488,14 +489,18 @@ parse_cuefile (_img_private_t *cd, const char *psz_cue_name)
                      "Track number out of range 1 to %d, got %s.", CDIO_CD_MAX_TRACKS, psz_field);
             goto err_exit;
           }
-          if(cd) {
-            if (-1 == i) {
+          /* Track numbers must follow each other, so the last one is
+             at most 99 too. */
+          if (-1 == i) {
+            i_first_track = i_track;
+            if (cd)
               cd->gen.i_first_track = i_track;
-            } else if(cd->gen.i_first_track + i + 1 != i_track) {
-              cdio_log(log_level,
-                       "Track number out of sequence. Expected %d, got %d",
-                       cd->gen.i_first_track + i + 1, i_track);
-            }
+          } else if (i_first_track + i + 1 != i_track) {
+            cdio_log(log_level,
+                     "%s line %d: track number out of sequence. "
+                     "Expected %d, got %d", psz_cue_name, i_line,
+                     i_first_track + i + 1, i_track);
+            goto err_exit;
           }
         }
         if (NULL != (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
