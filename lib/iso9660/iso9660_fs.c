@@ -752,6 +752,8 @@ iso9660_iso_seek_read (const iso9660_t *p_iso, void *ptr, lsn_t start,
 static bool
 iso9660_check_dir_block_end(iso9660_dir_t *p_iso9660_dir, unsigned *offset)
 {
+  unsigned int i_len;
+
   if (!iso9660_get_dir_len(p_iso9660_dir))
     {
       /*
@@ -766,8 +768,14 @@ iso9660_check_dir_block_end(iso9660_dir_t *p_iso9660_dir, unsigned *offset)
       return true;
     }
 
-  if ((*offset + iso9660_get_dir_len(p_iso9660_dir) - 1) / ISO_BLOCKSIZE
-      != *offset / ISO_BLOCKSIZE)
+  /* A record shorter than its fixed part is malformed, and callers
+     still read the fixed part: check that it fits in the block too,
+     or reading it at the end of the last block goes past the buffer. */
+  i_len = iso9660_get_dir_len(p_iso9660_dir);
+  if (i_len < sizeof(iso9660_dir_t))
+    i_len = sizeof(iso9660_dir_t);
+
+  if ((*offset + i_len - 1) / ISO_BLOCKSIZE != *offset / ISO_BLOCKSIZE)
     {
       /*
 	 Directory record spans over block limit.
