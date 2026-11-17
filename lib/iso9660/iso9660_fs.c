@@ -591,11 +591,18 @@ iso9660_ifs_fuzzy_read_superblock (iso9660_t *p_iso,
 	  return false;
 	}
 
+	/* The frame isn't NUL-terminated when the whole of it is read,
+	   so look for the identifier only within the frame. */
 	q = memchr(frame, 'C', p_iso->i_framesize);
 	for ( p=q; p && p < frame + p_iso->i_framesize ; p=q+1 ) {
 	  q = memchr(p, 'C', p_iso->i_framesize - (p - frame));
-	  if ( !q || (pvd = strstr(q, ISO_STANDARD_ID)) )
+	  if (!q)
 	    break;
+	  if (q + strlen(ISO_STANDARD_ID) <= frame + p_iso->i_framesize
+	      && 0 == memcmp(q, ISO_STANDARD_ID, strlen(ISO_STANDARD_ID))) {
+	    pvd = q;
+	    break;
+	  }
 	}
 
 	if (pvd) {
