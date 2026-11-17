@@ -792,7 +792,7 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 	    if (cd) {
 	      off_t i_size = cdio_stream_stat(cd->tocent[i_track].data_source);
 	      if (lba) {
-		if ( (lba * cd->tocent[i_track].datasize) > i_size) {
+		if ( ((off_t) lba * cd->tocent[i_track].datasize) > i_size) {
 		  cdio_log(log_level,
 			   "%s line %d: MSF length %s exceeds end of file",
 			   psz_cue_name, i_line, psz_field);
