@@ -204,7 +204,10 @@ _read_cdrdao (void *user_data, void *data, size_t size)
 
   while (size > 0) {
     int rem = (int) (this_track->datasize - env->pos.buff_offset);
-    if (size <= rem) {
+    /* Nothing left of this sector to read. */
+    if (rem <= 0)
+      break;
+    if (size <= (size_t) rem) {
       this_size = cdio_stream_read(this_track->data_source, buf, size, 1);
       final_size += this_size;
       memcpy (p, buf, this_size);
@@ -229,8 +232,13 @@ _read_cdrdao (void *user_data, void *data, size_t size)
     env->pos.buff_offset=0;
     env->pos.lba++;
 
-    /* Have gone into next track. */
-    if (env->pos.lba >= env->tocent[env->pos.index+1].start_lba) {
+    /* Have gone into next track. pos.lba counts sectors from the
+       start of the image, from 0, while start_lba includes the
+       pregap. The entry after the last track's is the lead-out, which
+       holds no data: stay in the last track. */
+    if (env->pos.index + 1 < env->gen.i_tracks
+        && cdio_lsn_to_lba(env->pos.lba)
+           >= env->tocent[env->pos.index+1].start_lba) {
       env->pos.index++;
       this_track=&(env->tocent[env->pos.index]);
       skip_size = this_track->datastart + this_track->endsize;
