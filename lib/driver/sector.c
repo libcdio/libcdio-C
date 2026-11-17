@@ -184,8 +184,16 @@ cdio_msf3_to_lba (unsigned int minutes, unsigned int seconds,
 	  + frames);
 }
 
+/* The most minutes whose LBA, with 59 seconds and 74 frames, fits in
+   an lba_t */
+#define MAX_MMSSFF_MINUTES \
+  ((INT32_MAX - (CDIO_CD_SECS_PER_MIN * CDIO_CD_FRAMES_PER_SEC - 1)) \
+   / (CDIO_CD_SECS_PER_MIN * CDIO_CD_FRAMES_PER_SEC))
+
 /**
   Convert a string of the form MM:SS:FF into the corresponding LBA.
+  SS is below 60 and FF below 75, and both have one or two digits. MM
+  can have any number of digits, as long as the LBA fits in an lba_t.
   CDIO_INVALID_LBA is returned if there is an error.
 */
 lba_t
@@ -207,6 +215,12 @@ cdio_mmssff_to_lba (const char *psz_mmssff)
     if(c >= '0' && c <= '9')
       psz_field = psz_field * 10 + (c - '0');
     else
+      return CDIO_INVALID_LBA;
+    /* Any number of minutes is accepted, since the string can be an
+       offset into a file longer than a CD, as long as the LBA fits in
+       an lba_t. Checking here also keeps a long string of digits from
+       overflowing. */
+    if (psz_field > MAX_MMSSFF_MINUTES)
       return CDIO_INVALID_LBA;
   }
 
@@ -234,12 +248,12 @@ cdio_mmssff_to_lba (const char *psz_mmssff)
   ret += cdio_msf3_to_lba (0, psz_field, 0);
 
   c = *psz_mmssff++;
-  if (isdigit(c))
+  if(c >= '0' && c <= '9')
     psz_field = (c - '0');
   else
-    return -1;
+    return CDIO_INVALID_LBA;
   if('\0' != (c = *psz_mmssff++)) {
-    if (isdigit(c)) {
+    if(c >= '0' && c <= '9') {
       psz_field = psz_field * 10 + (c - '0');
       c = *psz_mmssff++;
     }
