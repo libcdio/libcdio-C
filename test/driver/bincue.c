@@ -213,6 +213,105 @@ check_no_tracks(void)
   return 0;
 }
 
+/* An INDEX or PREGAP given an MSF string out of range or that isn't
+   one must be rejected, and the same cue sheet with a valid one
+   accepted. Frames that weren't digits used to be read as -1 */
+static int
+check_msf_cue(const char *psz_line, const char *psz_msf, bool b_valid)
+{
+  const char *cue_name = "bincue-bad-msf.cue";
+  const char *bin_name = "bincue-bad-msf.bin";
+  FILE *cue, *bin;
+  CdIo_t *p_cdio;
+  long i;
+  int ret = 0;
+
+  /* The BIN file is named as cue sheets name it, next to the cue
+     sheet: an absolute DATA_DIR may start with a drive letter */
+  bin = fopen(bin_name, "wb");
+  if (!bin) {
+    printf("Can't create %s\n", bin_name);
+    return 1;
+  }
+  for (i = 0; i < 4 * CDIO_CD_FRAMESIZE_RAW; i++)
+    fputc(0, bin);
+  fclose(bin);
+  cue = fopen(cue_name, "w");
+  if (!cue) {
+    printf("Can't create %s\n", cue_name);
+    remove(bin_name);
+    return 1;
+  }
+  fprintf(cue, "FILE \"%s\" BINARY\n  TRACK 01 AUDIO\n", bin_name);
+  if (0 == strcmp(psz_line, "INDEX"))
+    fprintf(cue, "    INDEX 01 %s\n", psz_msf);
+  else
+    fprintf(cue, "    PREGAP %s\n    INDEX 01 00:00:00\n", psz_msf);
+  fclose(cue);
+
+  p_cdio = cdio_open_bincue(cue_name);
+  remove(cue_name);
+  if (b_valid != (NULL != p_cdio)) {
+    printf("Incorrect: %s %s %s.\n", psz_line, psz_msf,
+           b_valid ? "doesn't open" : "opened");
+    ret = 1;
+  }
+  if (p_cdio)
+    cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
+static int
+check_bad_msf(const char *psz_line)
+{
+  static const char *const bad[] = {
+    "00:00:x", "477218:00:00", "954437:10:43", "00:60:00", "00:00:75",
+  };
+  unsigned int i;
+  int ret = check_msf_cue(psz_line, "00:00:00", true);
+
+  for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+    if (check_msf_cue(psz_line, bad[i], false))
+      ret = 1;
+  return ret;
+}
+
+/* cdio_read() past the end of the image stops in the last track: it
+   used to go on into the lead-out entry, which has no data, and from
+   there past the end of tocent[]. Only a memory checker sees that */
+static int
+check_read_past_end(void)
+{
+  const size_t i_size = 710304; /* cdda.bin */
+  char *buf = malloc(2 * i_size);
+  CdIo_t *p_cdio = cdio_open_bincue(DATA_DIR "/cdda.cue");
+  ssize_t i_read;
+  int ret = 0;
+
+  if (!buf || !p_cdio) {
+    printf("Can't open cdda.cue\n");
+    free(buf);
+    if (p_cdio)
+      cdio_destroy(p_cdio);
+    return 1;
+  }
+  if (cdio_lseek(p_cdio, 0, SEEK_SET) < 0) {
+    printf("Can't seek in cdda.cue\n");
+    ret = 1;
+  } else {
+    i_read = cdio_read(p_cdio, buf, 2 * i_size);
+    if (i_read < 0 || (size_t) i_read > i_size) {
+      printf("Incorrect: read %ld bytes past the end of cdda.cue\n",
+             (long) i_read);
+      ret = 1;
+    }
+  }
+  cdio_destroy(p_cdio);
+  free(buf);
+  return ret;
+}
+
 static int
 check_mode2_seek(const char *cue_name, const char *mode)
 {
@@ -271,6 +370,10 @@ main(int argc, const char *argv[])
   if (check_first_track_not_one())
     ret = 1;
   if (check_read_audio_sectors_sub())
+    ret = 1;
+  if (check_bad_msf("INDEX") || check_bad_msf("PREGAP"))
+    ret = 1;
+  if (check_read_past_end())
     ret = 1;
   if (check_mode2_seek("mode2-2048.cue", "MODE2/2048")
       || check_mode2_seek("mode2-2324.cue", "MODE2/2324"))
