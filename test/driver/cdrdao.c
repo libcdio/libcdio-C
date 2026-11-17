@@ -625,15 +625,135 @@ check_msf_toc(const char *psz_keyword, const char *psz_msf, bool b_valid)
   return ret;
 }
 
+/* MSF strings that must be rejected */
+static const char *const bad_msf[] = {
+  "xx",
+  "00:00:x",            /* frames not a digit */
+  "00:x:00",
+  "x:00:00",
+  "477218:00:00",       /* the LBA doesn't fit in an lba_t */
+  "954437:10:43",       /* used to wrap around to a negative LBA */
+  "99999999999999999999:00:00",
+  "00:60:00",
+  "00:00:75",
+  "00:00:000",
+  "00:000:00",
+  "00:00",
+  "",
+};
+
 /* A track keyword given an invalid MSF string must be rejected, and the
    same TOC with a valid one accepted */
 static int
 check_bad_msf(const char *psz_keyword)
 {
   int ret = check_msf_toc(psz_keyword, "00:00:00", true);
+  unsigned int i;
 
-  if (check_msf_toc(psz_keyword, "xx", false))
+  /* More minutes than a CD holds, as an offset into a long file can
+     have, and the largest MSF whose LBA fits in an lba_t */
+  if (check_msf_toc(psz_keyword, "180:00:00", true)
+      || check_msf_toc(psz_keyword, "477217:59:74", true))
     ret = 1;
+
+  for (i = 0; i < sizeof(bad_msf) / sizeof(bad_msf[0]); i++)
+    if (bad_msf[i][0] && check_msf_toc(psz_keyword, bad_msf[i], false))
+      ret = 1;
+  return ret;
+}
+
+/* The length of a DATAFILE given as an invalid MSF string must be
+   rejected. A length whose frames aren't digits used to be accepted as
+   -1 sectors */
+static int
+check_bad_datafile_length(void)
+{
+  const char *toc_name = "cdrdao-bad-length.toc";
+  const char *bin_name = "cdrdao-bad-length.bin";
+  unsigned int i;
+  int ret = 0;
+
+  if (write_zeros(bin_name, 4 * CDIO_CD_FRAMESIZE_RAW))
+    return 1;
+  for (i = 0; i < sizeof(bad_msf) / sizeof(bad_msf[0]); i++) {
+    FILE *toc;
+    CdIo_t *p_cdio;
+
+    if (!bad_msf[i][0])
+      continue;
+    toc = fopen(toc_name, "w");
+    if (!toc) {
+      fprintf(stderr, "Unable to create %s\n", toc_name);
+      ret = 1;
+      break;
+    }
+    fprintf(toc, "CD_DA\nTRACK AUDIO\nDATAFILE \"%s\" %s\n"
+            "TRACK AUDIO\nDATAFILE \"%s\"\n", bin_name, bad_msf[i], bin_name);
+    fclose(toc);
+    p_cdio = cdio_open_cdrdao(toc_name);
+    remove(toc_name);
+    if (p_cdio) {
+      fprintf(stderr, "Incorrect: DATAFILE length %s opened.\n", bad_msf[i]);
+      cdio_destroy(p_cdio);
+      ret = 1;
+    }
+  }
+  remove(bin_name);
+  return ret;
+}
+
+/* cdio_read() past the end of the image stops in the last track: it
+   used to go on into the lead-out entry, which has no data, and from
+   there past the end of tocent[]. Only a memory checker sees that */
+static int
+check_read_past_end(void)
+{
+  const char *toc_name = "cdrdao-read-past-end.toc";
+  const char *bin_name = "cdrdao-read-past-end.bin";
+  const size_t i_size = 4 * CDIO_CD_FRAMESIZE_RAW;
+  char *buf;
+  FILE *toc;
+  CdIo_t *p_cdio;
+  ssize_t i_read;
+  int ret = 0;
+
+  if (write_zeros(bin_name, i_size))
+    return 1;
+  buf = malloc(2 * i_size);
+  toc = fopen(toc_name, "w");
+  if (!buf || !toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    free(buf);
+    if (toc)
+      fclose(toc);
+    remove(bin_name);
+    return 1;
+  }
+  fprintf(toc, "CD_DA\nTRACK AUDIO\nFILE \"%s\" 0\n", bin_name);
+  fclose(toc);
+
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  if (!p_cdio) {
+    fprintf(stderr, "Can't open %s\n", toc_name);
+    free(buf);
+    remove(bin_name);
+    return 1;
+  }
+  if (cdio_lseek(p_cdio, 0, SEEK_SET) < 0) {
+    fprintf(stderr, "Can't seek in %s\n", toc_name);
+    ret = 1;
+  } else {
+    i_read = cdio_read(p_cdio, buf, 2 * i_size);
+    if (i_read < 0 || (size_t) i_read > i_size) {
+      fprintf(stderr, "Incorrect: read %ld bytes past the end of %s\n",
+              (long) i_read, toc_name);
+      ret = 1;
+    }
+  }
+  cdio_destroy(p_cdio);
+  free(buf);
+  remove(bin_name);
   return ret;
 }
 
@@ -694,6 +814,8 @@ main(int argc, const char *argv[])
 
   if (check_bad_msf("START") || check_bad_msf("PREGAP")
       || check_bad_msf("SILENCE"))
+    ret = 1;
+  if (check_bad_datafile_length() || check_read_past_end())
     ret = 1;
 #ifdef HAVE_CHDIR
       if (0 == chdir(DATA_DIR))

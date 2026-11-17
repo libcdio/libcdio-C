@@ -208,7 +208,10 @@ _read_bincue (void *p_user_data, void *data, size_t size)
 
   while (size > 0) {
     long int rem = (long int) (this_track->datasize - p_env->pos.buff_offset);
-    if ((long int) size <= rem) {
+    /* Nothing left of this sector to read. */
+    if (rem <= 0)
+      break;
+    if (size <= (size_t) rem) {
       this_size = cdio_stream_read(p_env->gen.data_source, buf, size, 1);
       final_size += this_size;
       memcpy (p, buf, this_size);
@@ -233,8 +236,13 @@ _read_bincue (void *p_user_data, void *data, size_t size)
     p_env->pos.buff_offset=0;
     p_env->pos.lba++;
 
-    /* Have gone into next track. */
-    if (p_env->pos.lba >= p_env->tocent[p_env->pos.index+1].start_lba) {
+    /* Have gone into next track. pos.lba counts sectors from the
+       start of the image, from 0, while start_lba includes the
+       pregap. The entry after the last track's is the lead-out, which
+       holds no data: stay in the last track. */
+    if (p_env->pos.index + 1 < p_env->gen.i_tracks
+        && cdio_lsn_to_lba(p_env->pos.lba)
+           >= p_env->tocent[p_env->pos.index+1].start_lba) {
       p_env->pos.index++;
       this_track=&(p_env->tocent[p_env->pos.index]);
       skip_size = this_track->datastart + this_track->endsize;

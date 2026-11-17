@@ -265,7 +265,9 @@ typedef enum cdio_cd_minutes_sectors
 
       /**
         Convert a string of the form MM:SS:FF into the corresponding LBA.
-        CDIO_INVALID_LBA is returned if there is an error.
+        SS is below 60 and FF below 75, and both have one or two digits.
+        MM can have any number of digits, as long as the LBA fits in an
+        lba_t. CDIO_INVALID_LBA is returned if there is an error.
       */
       lba_t cdio_mmssff_to_lba (const char *psz_mmssff);
 
