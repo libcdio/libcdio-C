@@ -1772,10 +1772,16 @@ find_lsn_recurse (void *p_image, iso9660_readdir_t iso9660_readdir,
 		  CdioList_t *visited)
 {
   CdioISO9660FileList_t *entlist = iso9660_readdir (p_image, psz_path);
-  CdioISO9660DirList_t *dirlist = iso9660_filelist_new();
+  CdioISO9660DirList_t *dirlist;
   CdioListNode_t *entnode;
 
-  cdio_assert (entlist != NULL);
+  /* A directory that can't be read doesn't hold the LSN: go on with
+     the others. */
+  if (entlist == NULL) {
+    cdio_warn("Can't read directory %s", psz_path);
+    return NULL;
+  }
+  dirlist = iso9660_filelist_new();
 
   /* iterate over each entry in the directory */
 
