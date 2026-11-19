@@ -591,11 +591,18 @@ iso9660_ifs_fuzzy_read_superblock (iso9660_t *p_iso,
 	  return false;
 	}
 
+	/* The frame isn't NUL-terminated when the whole of it is read,
+	   so look for the identifier only within the frame. */
 	q = memchr(frame, 'C', p_iso->i_framesize);
 	for ( p=q; p && p < frame + p_iso->i_framesize ; p=q+1 ) {
 	  q = memchr(p, 'C', p_iso->i_framesize - (p - frame));
-	  if ( !q || (pvd = strstr(q, ISO_STANDARD_ID)) )
+	  if (!q)
 	    break;
+	  if (q + strlen(ISO_STANDARD_ID) <= frame + p_iso->i_framesize
+	      && 0 == memcmp(q, ISO_STANDARD_ID, strlen(ISO_STANDARD_ID))) {
+	    pvd = q;
+	    break;
+	  }
 	}
 
 	if (pvd) {
@@ -752,6 +759,8 @@ iso9660_iso_seek_read (const iso9660_t *p_iso, void *ptr, lsn_t start,
 static bool
 iso9660_check_dir_block_end(iso9660_dir_t *p_iso9660_dir, unsigned *offset)
 {
+  unsigned int i_len;
+
   if (!iso9660_get_dir_len(p_iso9660_dir))
     {
       /*
@@ -766,8 +775,14 @@ iso9660_check_dir_block_end(iso9660_dir_t *p_iso9660_dir, unsigned *offset)
       return true;
     }
 
-  if ((*offset + iso9660_get_dir_len(p_iso9660_dir) - 1) / ISO_BLOCKSIZE
-      != *offset / ISO_BLOCKSIZE)
+  /* A record shorter than its fixed part is malformed, and callers
+     still read the fixed part: check that it fits in the block too,
+     or reading it at the end of the last block goes past the buffer. */
+  i_len = iso9660_get_dir_len(p_iso9660_dir);
+  if (i_len < sizeof(iso9660_dir_t))
+    i_len = sizeof(iso9660_dir_t);
+
+  if ((*offset + i_len - 1) / ISO_BLOCKSIZE != *offset / ISO_BLOCKSIZE)
     {
       /*
 	 Directory record spans over block limit.
@@ -1174,10 +1189,12 @@ _fs_stat_traverse (const CdIo_t *p_cdio, const iso9660_stat_t *_root,
       p_stat = calloc(1, len);
       cdio_assert (p_stat != NULL);
       memcpy(p_stat, _root, len);
-      p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
-      cdio_assert (p_stat->rr.psz_symlink != NULL);
-      memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
-	     p_stat->rr.i_symlink_max);
+      if (_root->rr.psz_symlink != NULL) {
+	p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
+	cdio_assert (p_stat->rr.psz_symlink != NULL);
+	memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
+	       p_stat->rr.i_symlink_max);
+      }
       return p_stat;
     }
 
@@ -1289,10 +1306,12 @@ _fs_iso_stat_traverse (iso9660_t *p_iso, const iso9660_stat_t *_root,
       p_stat = calloc(1, len);
       cdio_assert (p_stat != NULL);
       memcpy(p_stat, _root, len);
-      p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
-      cdio_assert (p_stat->rr.psz_symlink != NULL);
-      memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
-	     p_stat->rr.i_symlink_max);
+      if (_root->rr.psz_symlink != NULL) {
+	p_stat->rr.psz_symlink = calloc(1, p_stat->rr.i_symlink_max);
+	cdio_assert (p_stat->rr.psz_symlink != NULL);
+	memcpy(p_stat->rr.psz_symlink, _root->rr.psz_symlink,
+	       p_stat->rr.i_symlink_max);
+      }
       return p_stat;
     }
 
@@ -1772,10 +1791,16 @@ find_lsn_recurse (void *p_image, iso9660_readdir_t iso9660_readdir,
 		  CdioList_t *visited)
 {
   CdioISO9660FileList_t *entlist = iso9660_readdir (p_image, psz_path);
-  CdioISO9660DirList_t *dirlist = iso9660_filelist_new();
+  CdioISO9660DirList_t *dirlist;
   CdioListNode_t *entnode;
 
-  cdio_assert (entlist != NULL);
+  /* A directory that can't be read doesn't hold the LSN: go on with
+     the others. */
+  if (entlist == NULL) {
+    cdio_warn("Can't read directory %s", psz_path);
+    return NULL;
+  }
+  dirlist = iso9660_filelist_new();
 
   /* iterate over each entry in the directory */
 
@@ -1802,6 +1827,8 @@ find_lsn_recurse (void *p_image, iso9660_readdir_t iso9660_readdir,
 	    return NULL;
 	  }
 	memcpy(ret_stat, statbuf, len2);
+	/* ret_stat now owns the symlink: don't free it with the list. */
+	statbuf->rr.psz_symlink = NULL;
 	iso9660_filelist_free (entlist);
 	iso9660_dirlist_free(dirlist);
 	return ret_stat;

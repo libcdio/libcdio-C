@@ -62,25 +62,30 @@ _iso9660_dd_find_lsn(void* p_image, lsn_t i_lsn);
 static bool
 realloc_symlink(/*in/out*/ iso9660_stat_t *p_stat, uint8_t i_grow)
 {
-  if (!p_stat->rr.i_symlink) {
-    const uint16_t i_max = 2*i_grow+1;
-    p_stat->rr.psz_symlink = (char *) calloc(1, i_max);
-    p_stat->rr.i_symlink_max = i_max;
-    return (NULL != p_stat->rr.psz_symlink);
-  } else {
-    unsigned int i_needed = p_stat->rr.i_symlink + i_grow * 2; // Allocate enough space for growth and additional buffer
-    if ( i_needed <= p_stat->rr.i_symlink_max)
-      return true;
-    else {
-      char * psz_newsymlink = (char *) calloc(1, 2*i_needed);
-      if (!psz_newsymlink) return false;
-      p_stat->rr.i_symlink_max = 2*i_needed;
-      memcpy(psz_newsymlink, p_stat->rr.psz_symlink, p_stat->rr.i_symlink);
-      free(p_stat->rr.psz_symlink);
-      p_stat->rr.psz_symlink = psz_newsymlink;
-      return true;
-    }
+  /* Allocate enough space for growth, an additional buffer and the
+     final NUL. */
+  const unsigned int i_needed = p_stat->rr.i_symlink + i_grow * 2 + 1;
+  char *psz_newsymlink;
+
+  if (p_stat->rr.psz_symlink != NULL
+      && i_needed <= (unsigned int) p_stat->rr.i_symlink_max)
+    return true;
+
+  psz_newsymlink = (char *) calloc(1, 2*i_needed);
+  if (!psz_newsymlink) return false;
+  /* The length can be ahead of the buffer: an SL record that is
+     continued counts the separator before it allocates it, and the
+     buffer can be missing altogether when no component was stored. */
+  if (p_stat->rr.psz_symlink != NULL) {
+    const int i_copy = p_stat->rr.i_symlink < p_stat->rr.i_symlink_max
+      ? p_stat->rr.i_symlink : p_stat->rr.i_symlink_max;
+    if (i_copy > 0)
+      memcpy(psz_newsymlink, p_stat->rr.psz_symlink, i_copy);
+    free(p_stat->rr.psz_symlink);
   }
+  p_stat->rr.psz_symlink = psz_newsymlink;
+  p_stat->rr.i_symlink_max = 2*i_needed;
+  return true;
 }
 
 /* These functions are designed to read the system areas of a directory record
@@ -397,6 +402,8 @@ repeat:
 	    cdio_warn("Could not get Rock Ridge deep directory child");
 	    break;
 	  }
+	  /* p_stat takes the target's symlink below: free its own. */
+	  free(p_stat->rr.psz_symlink);
 	  memcpy(p_stat, target, sizeof(iso9660_stat_t));
 	  /* Prevent the symlink from being freed on the duplicated struct */
 	  target->rr.psz_symlink = NULL;
