@@ -507,9 +507,12 @@ parse_nrg (_img_private_t *p_env, const char *psz_nrg_name,
 	  disc_mode = _dao_common->unknown[1];
 
 	  /* We include an extra 0 byte so these can be used as C strings.*/
+	  free(p_env->psz_mcn);
 	  p_env->psz_mcn = calloc(1, CDIO_MCN_SIZE+1);
-	  if (p_env->psz_mcn == NULL)
+	  if (p_env->psz_mcn == NULL) {
+	    free(footer_buf);
 	    return false;
+	  }
 	  memcpy(p_env->psz_mcn, &(_dao_common->psz_mcn), CDIO_MCN_SIZE);
 	  p_env->psz_mcn[CDIO_MCN_SIZE] = '\0';
 
@@ -619,7 +622,12 @@ parse_nrg (_img_private_t *p_env, const char *psz_nrg_name,
 	    } else {
 	      _dao_array_common = &_ientries->track_info[i].common;
 	    }
+	    free(p_env->tocent[i].isrc);
 	    p_env->tocent[i].isrc = calloc(1, CDIO_ISRC_SIZE+1);
+	    if (p_env->tocent[i].isrc == NULL) {
+	      free(footer_buf);
+	      return false;
+	    }
 	    memcpy(p_env->tocent[i].isrc, _dao_array_common->psz_isrc, CDIO_ISRC_SIZE);
 	    p_env->tocent[i].isrc[CDIO_ISRC_SIZE] = '\0';
 	    if (p_env->tocent[i].isrc[0]) {
@@ -922,6 +930,8 @@ parse_nrg (_img_private_t *p_env, const char *psz_nrg_name,
           free(footer_buf);
           return false;
         }
+        /* A later CD TEXT chunk replaces an earlier one */
+        cdtext_destroy(p_env->gen.cdtext);
         p_env->gen.cdtext = cdtext_init ();
         if(0 !=cdtext_data_init (p_env->gen.cdtext, wdata, len))
         {

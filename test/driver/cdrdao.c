@@ -757,6 +757,86 @@ check_read_past_end(void)
   return ret;
 }
 
+/* Write psz_body to a TOC file next to a 4-sector data file and open
+   it. Both files are removed again. */
+static CdIo_t *
+open_toc(const char *psz_body)
+{
+  const char *toc_name = "cdrdao-keywords.toc";
+  FILE *toc = fopen(toc_name, "w");
+  CdIo_t *p_cdio;
+
+  if (!toc) {
+    fprintf(stderr, "Unable to create %s\n", toc_name);
+    return NULL;
+  }
+  fprintf(toc, "%s", psz_body);
+  fclose(toc);
+  p_cdio = cdio_open_cdrdao(toc_name);
+  remove(toc_name);
+  return p_cdio;
+}
+
+/* A keyword given twice replaces the first value, and a TOC file that
+   fails after its first track is rejected. The first value, and the
+   tracks read before the error, used to be leaked, which only a memory
+   checker sees */
+static int
+check_repeated_keywords(void)
+{
+  const char *bin_name = "cdrdao-keywords.bin";
+  CdIo_t *p_cdio;
+  char *psz;
+  int ret = 0;
+
+  if (write_zeros(bin_name, 4 * CDIO_CD_FRAMESIZE_RAW))
+    return 1;
+  p_cdio = open_toc("CD_DA\n"
+                    "CATALOG \"0000000000001\"\n"
+                    "CATALOG \"0000000000002\"\n"
+                    "TRACK AUDIO\n"
+                    "ISRC \"USAAA0000001\"\n"
+                    "ISRC \"USAAA0000002\"\n"
+                    "FILE \"cdrdao-keywords.bin\" 0\n"
+                    "DATAFILE \"cdrdao-keywords.bin\"\n");
+  if (!p_cdio) {
+    fprintf(stderr,
+            "Incorrect: repeated CATALOG, FILE and ISRC don't open.\n");
+    remove(bin_name);
+    return 1;
+  }
+  psz = cdio_get_track_isrc(p_cdio, 1);
+  if (!psz || strcmp(psz, "USAAA0000002")) {
+    fprintf(stderr, "Incorrect: ISRC is %s, not the last one given.\n",
+            psz ? psz : "(none)");
+    ret = 1;
+  }
+  free(psz);
+  psz = cdio_get_mcn(p_cdio);
+  if (!psz || strcmp(psz, "0000000000002")) {
+    fprintf(stderr, "Incorrect: CATALOG is %s, not the last one given.\n",
+            psz ? psz : "(none)");
+    ret = 1;
+  }
+  free(psz);
+  cdio_destroy(p_cdio);
+
+  /* The second track is longer than the file */
+  p_cdio = open_toc("CD_DA\n"
+                    "TRACK AUDIO\n"
+                    "ISRC \"USAAA0000001\"\n"
+                    "FILE \"cdrdao-keywords.bin\" 0\n"
+                    "TRACK AUDIO\n"
+                    "FILE \"cdrdao-keywords.bin\" 0 50:00:00\n");
+  if (p_cdio) {
+    fprintf(stderr, "Incorrect: a track longer than its file opened.\n");
+    cdio_destroy(p_cdio);
+    ret = 1;
+  }
+  remove(bin_name);
+  return ret;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -816,6 +896,8 @@ main(int argc, const char *argv[])
       || check_bad_msf("SILENCE"))
     ret = 1;
   if (check_bad_datafile_length() || check_read_past_end())
+    ret = 1;
+  if (check_repeated_keywords())
     ret = 1;
 #ifdef HAVE_CHDIR
       if (0 == chdir(DATA_DIR))
