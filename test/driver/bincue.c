@@ -312,6 +312,161 @@ check_read_past_end(void)
   return ret;
 }
 
+/* Write a cue sheet whose FILE is a 4-sector BIN file of zeros, followed
+   by psz_body, and open it. Both files are in the current directory and
+   are removed again; the BIN file only once p_cdio is destroyed, which
+   remove_bin_cue() does. */
+static const char *bin_cue_bin = "bincue-tracks.bin";
+
+static CdIo_t *
+open_bin_cue(const char *psz_body)
+{
+  const char *cue_name = "bincue-tracks.cue";
+  FILE *cue, *bin;
+  CdIo_t *p_cdio;
+  long i;
+
+  bin = fopen(bin_cue_bin, "wb");
+  if (!bin) {
+    printf("Can't create %s\n", bin_cue_bin);
+    return NULL;
+  }
+  for (i = 0; i < 4 * CDIO_CD_FRAMESIZE_RAW; i++)
+    fputc(0, bin);
+  fclose(bin);
+  cue = fopen(cue_name, "w");
+  if (!cue) {
+    printf("Can't create %s\n", cue_name);
+    return NULL;
+  }
+  fprintf(cue, "FILE \"%s\" BINARY\n%s", bin_cue_bin, psz_body);
+  fclose(cue);
+
+  p_cdio = cdio_open_bincue(cue_name);
+  remove(cue_name);
+  return p_cdio;
+}
+
+static void
+remove_bin_cue(CdIo_t *p_cdio)
+{
+  if (p_cdio)
+    cdio_destroy(p_cdio);
+  remove(bin_cue_bin);
+}
+
+/* The track getters must reject a track number the image doesn't have,
+   also below the first track: they used to index the table of tracks
+   with it */
+static int
+check_track_range(void)
+{
+  static const track_t bad[] = { 1, 98, 100 };
+  CdIo_t *p_cdio = open_bin_cue("  TRACK 99 AUDIO\n    INDEX 01 00:00:00\n");
+  unsigned int i;
+  int ret = 0;
+
+  if (!p_cdio) {
+    printf("Can't open a cue sheet whose only track is 99\n");
+    remove_bin_cue(NULL);
+    return 1;
+  }
+  if (CDIO_TRACK_FLAG_ERROR == cdio_get_track_copy_permit(p_cdio, 99)
+      || -1 == cdio_get_track_channels(p_cdio, 99)) {
+    printf("Incorrect: track 99 is rejected.\n");
+    ret = 1;
+  }
+  for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    char *isrc = cdio_get_track_isrc(p_cdio, bad[i]);
+
+    if (isrc
+        || -1 != cdio_get_track_channels(p_cdio, bad[i])
+        || CDIO_TRACK_FLAG_ERROR != cdio_get_track_copy_permit(p_cdio, bad[i])
+        || CDIO_TRACK_FLAG_ERROR != cdio_get_track_preemphasis(p_cdio, bad[i])
+        || CDIO_INVALID_LBA != cdio_get_track_pregap_lba(p_cdio, bad[i])) {
+      printf("Incorrect: track %u of a disc with only track 99 accepted.\n",
+             (unsigned int) bad[i]);
+      ret = 1;
+    }
+    free(isrc);
+  }
+  remove_bin_cue(p_cdio);
+  return ret;
+}
+
+/* Track numbers must follow each other. A first track of 99 followed by
+   2 and 3 used to give a disc whose last track is 101 */
+static int
+check_track_sequence(void)
+{
+  static const char *const bad[] = {
+    "  TRACK 99 AUDIO\n    INDEX 01 00:00:00\n"
+    "  TRACK 02 AUDIO\n    INDEX 01 00:00:01\n"
+    "  TRACK 03 AUDIO\n    INDEX 01 00:00:02\n",
+    "  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"
+    "  TRACK 03 AUDIO\n    INDEX 01 00:00:01\n",
+    "  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n"
+    "  TRACK 01 AUDIO\n    INDEX 01 00:00:01\n",
+  };
+  unsigned int i;
+  int ret = 0;
+  CdIo_t *p_cdio = open_bin_cue("  TRACK 98 AUDIO\n    INDEX 01 00:00:00\n"
+                                "  TRACK 99 AUDIO\n    INDEX 01 00:00:01\n");
+
+  if (!p_cdio || 99 != cdio_get_last_track_num(p_cdio)) {
+    printf("Incorrect: tracks 98 and 99 don't open.\n");
+    ret = 1;
+  }
+  remove_bin_cue(p_cdio);
+  for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    p_cdio = open_bin_cue(bad[i]);
+    if (p_cdio) {
+      printf("Incorrect: tracks out of sequence opened (case %u).\n", i);
+      ret = 1;
+    }
+    remove_bin_cue(p_cdio);
+  }
+  return ret;
+}
+
+/* A keyword given twice replaces the first value. The first value
+   used to be leaked, which only a memory checker sees */
+static int
+check_repeated_keywords(void)
+{
+  CdIo_t *p_cdio = open_bin_cue("CATALOG 0000000000001\n"
+                                "CATALOG 0000000000002\n"
+                                "FILE \"bincue-tracks.bin\" BINARY\n"
+                                "  TRACK 01 AUDIO\n"
+                                "    ISRC USAAA0000001\n"
+                                "    ISRC USAAA0000002\n"
+                                "    INDEX 01 00:00:00\n");
+  char *psz;
+  int ret = 0;
+
+  if (!p_cdio) {
+    printf("Incorrect: repeated CATALOG, FILE and ISRC don't open.\n");
+    remove_bin_cue(NULL);
+    return 1;
+  }
+  psz = cdio_get_track_isrc(p_cdio, 1);
+  if (!psz || strcmp(psz, "USAAA0000002")) {
+    printf("Incorrect: ISRC is %s, not the last one given.\n",
+           psz ? psz : "(none)");
+    ret = 1;
+  }
+  free(psz);
+  psz = cdio_get_mcn(p_cdio);
+  if (!psz || strcmp(psz, "0000000000002")) {
+    printf("Incorrect: CATALOG is %s, not the last one given.\n",
+           psz ? psz : "(none)");
+    ret = 1;
+  }
+  free(psz);
+  remove_bin_cue(p_cdio);
+  return ret;
+}
+
 static int
 check_mode2_seek(const char *cue_name, const char *mode)
 {
@@ -374,6 +529,9 @@ main(int argc, const char *argv[])
   if (check_bad_msf("INDEX") || check_bad_msf("PREGAP"))
     ret = 1;
   if (check_read_past_end())
+    ret = 1;
+  if (check_track_range() || check_track_sequence()
+      || check_repeated_keywords())
     ret = 1;
   if (check_mode2_seek("mode2-2048.cue", "MODE2/2048")
       || check_mode2_seek("mode2-2324.cue", "MODE2/2324"))

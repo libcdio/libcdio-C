@@ -241,6 +241,17 @@ _get_track_msf_image(void *p_user_data, track_t i_track, msf_t *msf)
     return false;
 }
 
+/* Return the tocent[] entry of track number i_track, or NULL if the
+   image has no such track. */
+static const track_info_t *
+get_tocent_image(const _img_private_t *p_env, track_t i_track)
+{
+  if (i_track < p_env->gen.i_first_track
+      || i_track >= p_env->gen.i_first_track + p_env->gen.i_tracks)
+    return NULL;
+  return &p_env->tocent[i_track - p_env->gen.i_first_track];
+}
+
 /** Return number of channels in track: 2 or 4; -2 if not
   implemented or -1 for error.
   Not meaningful if track is not an audio track.
@@ -248,9 +259,10 @@ _get_track_msf_image(void *p_user_data, track_t i_track, msf_t *msf)
 int
 get_track_channels_image(const void *p_user_data, track_t i_track)
 {
-  const _img_private_t *p_env = p_user_data;
-  return ( p_env->tocent[i_track-p_env->gen.i_first_track].flags
-	  & FOUR_CHANNEL_AUDIO ) ? 4 : 2;
+  const track_info_t *p_tocent = get_tocent_image(p_user_data, i_track);
+
+  if (!p_tocent) return -1;
+  return ( p_tocent->flags & FOUR_CHANNEL_AUDIO ) ? 4 : 2;
 }
 
 /** Return 1 if copy is permitted on the track, 0 if not, or -1 for error.
@@ -259,9 +271,11 @@ get_track_channels_image(const void *p_user_data, track_t i_track)
 track_flag_t
 get_track_copy_permit_image(void *p_user_data, track_t i_track)
 {
-  const _img_private_t *p_env = p_user_data;
-  return ( p_env->tocent[i_track-p_env->gen.i_first_track].flags
-	   & COPY_PERMITTED ) ? CDIO_TRACK_FLAG_TRUE : CDIO_TRACK_FLAG_FALSE;
+  const track_info_t *p_tocent = get_tocent_image(p_user_data, i_track);
+
+  if (!p_tocent) return CDIO_TRACK_FLAG_ERROR;
+  return ( p_tocent->flags & COPY_PERMITTED )
+    ? CDIO_TRACK_FLAG_TRUE : CDIO_TRACK_FLAG_FALSE;
 }
 
 /** Return 1 if track has pre-emphasis, 0 if not, or -1 for error.
@@ -272,9 +286,11 @@ get_track_copy_permit_image(void *p_user_data, track_t i_track)
 track_flag_t
 get_track_preemphasis_image(const void *p_user_data, track_t i_track)
 {
-  const _img_private_t *p_env = p_user_data;
-  return ( p_env->tocent[i_track-p_env->gen.i_first_track].flags
-	   & PRE_EMPHASIS ) ? CDIO_TRACK_FLAG_TRUE : CDIO_TRACK_FLAG_FALSE;
+  const track_info_t *p_tocent = get_tocent_image(p_user_data, i_track);
+
+  if (!p_tocent) return CDIO_TRACK_FLAG_ERROR;
+  return ( p_tocent->flags & PRE_EMPHASIS )
+    ? CDIO_TRACK_FLAG_TRUE : CDIO_TRACK_FLAG_FALSE;
 }
 
 /** Return the starting LBA for the pregap for track number i_track.
@@ -284,11 +300,12 @@ get_track_preemphasis_image(const void *p_user_data, track_t i_track)
 lba_t
 get_track_pregap_lba_image(const void *p_user_data, track_t i_track)
 {
-  const _img_private_t *p_env = p_user_data;
+  const track_info_t *p_tocent = get_tocent_image(p_user_data, i_track);
   lba_t pregap, start_lba;
 
-  pregap    = p_env->tocent[i_track-p_env->gen.i_first_track].pregap;
-  start_lba = p_env->tocent[i_track-p_env->gen.i_first_track].start_lba;
+  if (!p_tocent) return CDIO_INVALID_LBA;
+  pregap    = p_tocent->pregap;
+  start_lba = p_tocent->start_lba;
 
   /* avoid initializing pregap to CDIO_INVALID_LBA by letting calloc
      do the work.  also, nero files have the pregap set equal
@@ -311,8 +328,8 @@ get_track_pregap_lba_image(const void *p_user_data, track_t i_track)
 char *
 get_track_isrc_image(const void *p_user_data, track_t i_track)
 {
-  const _img_private_t *p_env = p_user_data;
-  char *isrc = p_env->tocent[i_track-p_env->gen.i_first_track].isrc;
+  const track_info_t *p_tocent = get_tocent_image(p_user_data, i_track);
+  char *isrc = p_tocent ? p_tocent->isrc : NULL;
 
   if (isrc && isrc[0]) {
     return strdup(isrc);
