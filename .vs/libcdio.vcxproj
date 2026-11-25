@@ -220,7 +220,6 @@
     <ClInclude Include="..\lib\driver\MSWindows\aspi32.h" />
     <ClInclude Include="..\lib\driver\MSWindows\win32.h" />
     <ClInclude Include="config.h" />
-    <ClInclude Include="unistd.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

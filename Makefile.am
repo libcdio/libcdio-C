@@ -30,7 +30,6 @@ EXTRA_DIST = \
 	.vs/libcdio.vcxproj.filters \
 	.vs/README.txt \
 	.vs/set_version.ps1 \
-	.vs/unistd.h \
 	NEWS.md \
 	README.md \
 	README-libcdio.md \

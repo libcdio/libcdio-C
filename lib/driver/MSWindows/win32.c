@@ -72,7 +72,6 @@
 #endif
 
 #if defined (_MSC_VER) || defined (_XBOX)
-#undef IN
 extern const char* is_cdrom_aspi(const char drive_letter);
 #else
 #include "aspi32.h"

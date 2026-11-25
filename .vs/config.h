@@ -70,6 +70,9 @@
 /* Define to 1 if you have the `socket' library (-lsocket). */
 #undef HAVE_LIBSOCKET
 
+/* Define to 1 if you have the <limits.h> header file. */
+#define HAVE_LIMITS_H 1
+
 /* Define 1 if you have Linux-type CD-ROM support */
 #undef HAVE_LINUX_CDROM
 
@@ -102,6 +105,9 @@
 
 /* Define 1 if you have Solaris CD-ROM support */
 #undef HAVE_SOLARIS_CDROM
+
+/* Define to 1 if you have the <stdarg.h> header file. */
+#define HAVE_STDARG_H 1
 
 /* Define to 1 if you have the <stdbool.h> header file. */
 #define HAVE_STDBOOL_H 1
@@ -140,10 +146,13 @@
 #undef HAVE_TZSET
 
 /* Define to 1 if you have the <unistd.h> header file. */
-#define HAVE_UNISTD_H 1
+#undef HAVE_UNISTD_H
 
 /* Define this if you have libvcdinfo installed */
 #undef HAVE_VCDINFO
+
+/* Define to 1 if you have the <windows.h> header file. */
+#define HAVE_WINDOWS_H 1
 
 /* Define to 1 if you have the `vsnprintf' function. */
 #define HAVE_VSNPRINTF 1
