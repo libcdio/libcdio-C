@@ -1916,7 +1916,7 @@ iso9660_fs_find_lsn(CdIo_t *p_cdio, lsn_t i_lsn)
   return p_statbuf;
 }
 
-/* Another name for iso9660_fs_find_lsn; both are exported. */
+/* Deprecated other name for iso9660_fs_find_lsn, kept for the ABI. */
 iso9660_stat_t *
 iso9660_find_fs_lsn(CdIo_t *p_cdio, lsn_t i_lsn)
 {

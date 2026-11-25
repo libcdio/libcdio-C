@@ -36,7 +36,7 @@
 ISO9660::Stat *
 ISO9660::FS::find_lsn(lsn_t i_lsn)
 {
-  return new Stat(iso9660_find_fs_lsn(p_cdio, i_lsn));
+  return new Stat(iso9660_fs_find_lsn(p_cdio, i_lsn));
 }
 
 /**

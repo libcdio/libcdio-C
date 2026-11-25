@@ -912,7 +912,13 @@ iso9660_dir_calc_record_size (unsigned int namelen, unsigned int su_len);
    Caller must free return value using iso9660_stat_free().
  */
 iso9660_stat_t *iso9660_fs_find_lsn(CdIo_t *p_cdio, lsn_t i_lsn);
-iso9660_stat_t *iso9660_find_fs_lsn(CdIo_t *p_cdio, lsn_t i_lsn);
+
+/**
+   @deprecated Use iso9660_fs_find_lsn(), which this calls.
+ */
+LIBCDIO_DEPRECATED(iso9660_stat_t *iso9660_find_fs_lsn(CdIo_t *p_cdio,
+                                                       lsn_t i_lsn),
+                   "Use iso9660_fs_find_lsn()");
 
 
 /**
