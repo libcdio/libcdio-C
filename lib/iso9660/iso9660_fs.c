@@ -1915,12 +1915,13 @@ iso9660_fs_find_lsn(CdIo_t *p_cdio, lsn_t i_lsn)
     free(psz_full_filename);
   return p_statbuf;
 }
+
+/* Another name for iso9660_fs_find_lsn; both are exported. */
 iso9660_stat_t *
-#if defined(__GNUC__) && !defined(__DARWIN_C_ANSI)
-iso9660_find_fs_lsn(CdIo_t *p_cdio, lsn_t i_lsn) __attribute__ ((alias ("iso9660_fs_find_lsn")));
-#else
-iso9660_find_fs_lsn(CdIo_t *p_cdio, lsn_t i_lsn);
-#endif
+iso9660_find_fs_lsn(CdIo_t *p_cdio, lsn_t i_lsn)
+{
+  return iso9660_fs_find_lsn(p_cdio, i_lsn);
+}
 
 /**
    Given a directory pointer, find the filesystem entry that contains
