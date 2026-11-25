@@ -924,6 +924,10 @@ udf_readdir(udf_dirent_t *p_udf_dirent)
        p = (uint8_t*)p_udf_dirent->fid->u.imp_use.data
          + uint16_from_le(p_udf_dirent->fid->u.i_imp_use);
        p_udf_dirent->psz_name = unicode16_decode(p, u_len);
+       if (p_udf_dirent->psz_name == NULL) {
+         udf_dirent_free(p_udf_dirent);
+         return NULL;
+       }
       }
       return p_udf_dirent;
     }

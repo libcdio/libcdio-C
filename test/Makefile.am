@@ -26,7 +26,7 @@ SUBDIRS = data driver
 hack = check_sizeof testassert testgetdevices testischar \
        testisocd testisocd2 testisocd_joliet testiso9660 \
        testisorr testisorr_ce test_lib_driver_util testudf \
-       testudf_ad testudf_efe testpregap
+       testudf_ad testudf_bad_fid testudf_efe testpregap
 
 DATA_DIR       = @abs_top_srcdir@/test/data
 
@@ -49,6 +49,8 @@ testisorr_ce_LDADD    = $(LIBCDIO_LIBS) $(LTLIBICONV)
 testudf_LDADD         = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
 testudf_ad_CPPFLAGS   = $(AM_CPPFLAGS) -I$(top_srcdir)/lib/driver -I$(top_srcdir)/lib/udf
 testudf_ad_LDADD      = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
+testudf_bad_fid_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/lib/driver -I$(top_srcdir)/lib/udf
+testudf_bad_fid_LDADD = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
 testudf_efe_LDADD     = $(LIBUDF_LIBS) $(LIBCDIO_LIBS) $(LTLIBICONV)
 
 test_lib_driver_util_LDADD    = $(LIBCDIO_LIBS) $(LTLIBICONV)
@@ -108,7 +110,7 @@ check-short:
 check-iso-read-large:
 	@if ./check_iso_read.sh 5000; then \
 	  echo test of 5M iso_read succeeded; \
-	elif test $? -ne 77; then \
+	elif test $$? -ne 77; then \
 	  echo iso_read large file test failed; \
 	else \
 	  echo iso_read large file test skipped; \
@@ -126,7 +128,7 @@ check-iso-read-large-terse:
 # cleaner a way to do this, but frankly I've wasted far too much of my
 # life the crappy automess system that I've really lost interest in
 # learning any more of this awful system than I need to.
-check-am:	make-executable
+check-am: make-executable
 make-executable: check_nrg.sh check_cue.sh
 	@chmod +x *.sh
 	@if test ! -f cdda.bin -a ! -s cdda.bin ; then \
