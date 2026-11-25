@@ -373,7 +373,7 @@ bool cdio_charset_to_utf8(const char *src, size_t src_len, cdio_utf8_t **dst,
     if ((wstr = (wchar_t*)calloc(size, sizeof(wchar_t))) == NULL)
       return false;
 
-    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, wstr, size) != size) {
+    if (MultiByteToWideChar(codepage, 0, src, -1, wstr, size) != size) {
       free(wstr);
       return false;
     }
