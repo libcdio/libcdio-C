@@ -79,7 +79,7 @@ check_DATA = vcd_demo.right vcd_demo_vcdinfo.right \
 	     copying.right copying-rr.right \
 	     joliet.right joliet-nojoliet.right \
 	     malformed.right malformed2.right \
-	     copying.gpl copying-rr.gpl copying-rr-mingw.right \
+	     copying.gpl copying-rr.gpl \
 	     cdtext.right cdtext-libburnia.right
 
 EXTRA_DIST = $(check_SCRIPTS) $(check_DATA) \

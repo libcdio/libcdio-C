@@ -25,15 +25,9 @@
 # include <sys/stat.h>
 #endif
 
-/* MSYS 1.0.10 with MinGW 3.4.2 (and perhaps others) don't have
-   S_ISSOCK() or S_ISLNK() macros, so we'll roll our own. */
-#if !defined(HAVE_S_ISSOCK) && !defined(S_ISSOCK)
-#define S_ISSOCK(st_mode) ((((st_mode)) & 0170000) == (0140000))
-#endif
-
-#if !defined(HAVE_S_ISLNK) && !defined(S_ISLNK)
-#define S_ISLNK(st_mode) ((((st_mode)) & 0170000) == (0010000))
-#endif
+/* Rock Ridge records POSIX mode bits, which need not match the host's
+   S_IF* values, so test them with libcdio's own constants. */
+#define ROCK_ISLNK(st_mode) (((st_mode) & ISO_ROCK_IFMT) == ISO_ROCK_ISLNK)
 
 cdio_log_handler_t gl_default_cdio_log_handler = NULL;
 char *source_name = NULL;
@@ -484,7 +478,7 @@ print_fs_attrs(iso9660_stat_t *p_statbuf, bool b_rock, bool b_xa,
 
 #ifdef HAVE_ROCK
   if (yep == p_statbuf->rr.b3_rock && b_rock) {
-    total_size = (double) (S_ISLNK(p_statbuf->rr.st_mode)
+    total_size = (double) (ROCK_ISLNK(p_statbuf->rr.st_mode)
 				? strlen(p_statbuf->rr.psz_symlink)
 				: p_statbuf->total_size );
     report ( stdout, "  %s %3d %d %d [LSN %6lu] %9.f",
@@ -536,7 +530,7 @@ print_fs_attrs(iso9660_stat_t *p_statbuf, bool b_rock, bool b_xa,
 
     report (stdout," %s %s", date_str, psz_name_untranslated );
 
-    if (S_ISLNK(p_statbuf->rr.st_mode)) {
+    if (ROCK_ISLNK(p_statbuf->rr.st_mode)) {
       report(stdout, " -> %s", p_statbuf->rr.psz_symlink);
     }
 
