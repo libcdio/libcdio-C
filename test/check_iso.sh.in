@@ -29,13 +29,8 @@ check_result $RC 'iso-read basic test' "$ISO_READ $opts"
 
 if test -n "@HAVE_ROCK@"; then
   fname=copying-rr
-  if test -n "@MINGW32@"; then
-      right_file=${fname}-mingw.right
-  else
-      right_file=${fname}.right
-  fi
   opts="--quiet ${srcdir}/data/${fname}.iso --iso9660 "
-  test_iso_info  "$opts" ${fname}.dump ${srcdir}/${right_file}
+  test_iso_info  "$opts" ${fname}.dump ${srcdir}/${fname}.right
   RC=$?
   check_result $RC 'iso-info Rock Ridge test' "$ISO_INFO $opts"
 

@@ -64,6 +64,7 @@ extern enum iso_rock_enums {
   ISO_ROCK_ISFIFO = 010000    /**< pipe or FIFO */
 } iso_rock_enums;
 
+#define ISO_ROCK_IFMT     0170000 /** mask for the file type bits, ISO_ROCK_ISREG etc. */
 #define ISO_ROCK_IRUSR    000400  /** read permission (owner) */
 #define ISO_ROCK_IWUSR    000200  /** write permission (owner) */
 #define ISO_ROCK_IXUSR    000100  /** execute permission (owner) */

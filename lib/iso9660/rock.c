@@ -514,21 +514,18 @@ iso9660_get_rock_attr_str(posix_mode_t st_mode)
 {
   char *result = _getbuf();
 
-  if (S_ISBLK(st_mode))
-    result[ 0] = 'b';
-  else if (S_ISDIR(st_mode))
-    result[ 0] = 'd';
-  else if (S_ISCHR(st_mode))
-    result[ 0] = 'c';
-  else if (S_ISLNK(st_mode))
-    result[ 0] = 'l';
-  else if (S_ISFIFO(st_mode))
-    result[ 0] = 'p';
-  else if (S_ISSOCK(st_mode))
-    result[ 0] = 's';
-  /* May eventually fill in others.. */
-  else
-    result[ 0] = '-';
+  /* st_mode holds the POSIX mode bits recorded on the disc, which need
+     not match the host's S_IF* values; Windows has no S_IFLNK and its
+     S_IFBLK differs. */
+  switch (st_mode & ISO_ROCK_IFMT) {
+  case ISO_ROCK_ISBLK:  result[ 0] = 'b'; break;
+  case ISO_ROCK_ISDIR:  result[ 0] = 'd'; break;
+  case ISO_ROCK_ISCHR:  result[ 0] = 'c'; break;
+  case ISO_ROCK_ISLNK:  result[ 0] = 'l'; break;
+  case ISO_ROCK_ISFIFO: result[ 0] = 'p'; break;
+  case ISO_ROCK_ISSOCK: result[ 0] = 's'; break;
+  default:              result[ 0] = '-'; break;
+  }
 
   result[ 1] = (st_mode & ISO_ROCK_IRUSR) ? 'r' : '-';
   result[ 2] = (st_mode & ISO_ROCK_IWUSR) ? 'w' : '-';
