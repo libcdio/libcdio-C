@@ -174,8 +174,5 @@
     <ClInclude Include="config.h">
       <Filter>Include Files</Filter>
     </ClInclude>
-    <ClInclude Include="unistd.h">
-      <Filter>Include Files</Filter>
-    </ClInclude>
   </ItemGroup>
 </Project>

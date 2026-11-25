@@ -1116,7 +1116,7 @@ _read_audio_sectors_nrg (void *p_user_data, void *data, lsn_t lsn,
   _CDIO_LIST_FOREACH (node, p_env->mapping) {
     _mapping_t *_map = _cdio_list_node_data (node);
 
-    if (IN (lsn, _map->start_lsn, (_map->start_lsn + _map->sec_count - 1))) {
+    if (CDIO_IN (lsn, _map->start_lsn, (_map->start_lsn + _map->sec_count - 1))) {
       int ret;
       long int img_offset = _map->img_offset;
 
@@ -1157,7 +1157,7 @@ _read_mode1_sector_nrg (void *p_user_data, void *data, lsn_t lsn,
   _CDIO_LIST_FOREACH (node, p_env->mapping) {
     _mapping_t *_map = _cdio_list_node_data (node);
 
-    if (IN (lsn, _map->start_lsn, (_map->start_lsn + _map->sec_count - 1))) {
+    if (CDIO_IN (lsn, _map->start_lsn, (_map->start_lsn + _map->sec_count - 1))) {
       int ret;
       long int img_offset = _map->img_offset;
 
@@ -1228,7 +1228,7 @@ _read_mode2_sector_nrg (void *p_user_data, void *data, lsn_t lsn,
   _CDIO_LIST_FOREACH (node, p_env->mapping) {
     _mapping_t *_map = _cdio_list_node_data (node);
 
-    if (IN (lsn, _map->start_lsn, (_map->start_lsn + _map->sec_count - 1))) {
+    if (CDIO_IN (lsn, _map->start_lsn, (_map->start_lsn + _map->sec_count - 1))) {
       int ret;
       long int img_offset = _map->img_offset;
 
