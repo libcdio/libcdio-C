@@ -1178,17 +1178,28 @@ read_toc_linux (void *p_user_data)
     return false;
   }
 
-  p_env->gen.i_first_track = p_env->tochdr.cdth_trk0;
-  i_last_track             = p_env->tochdr.cdth_trk1;
-  p_env->gen.i_tracks      = i_last_track - p_env->gen.i_first_track + 1;
+  /* tocent[] and track_flags[] have room for track numbers up to
+     CDIO_CD_MAX_TRACKS, and the loop below indexes them by the track
+     numbers in the header, so reject a header that makes no sense and
+     stop at track CDIO_CD_MAX_TRACKS. */
+  i_last_track = p_env->tochdr.cdth_trk1;
+  if (p_env->tochdr.cdth_trk0 < 1
+      || p_env->tochdr.cdth_trk0 > CDIO_CD_MAX_TRACKS
+      || i_last_track < p_env->tochdr.cdth_trk0) {
+    cdio_warn("invalid TOC header: first track %d, last track %d\n",
+              p_env->tochdr.cdth_trk0, p_env->tochdr.cdth_trk1);
+    return false;
+  }
 
-  u_tracks = p_env->gen.i_tracks;
-
-  if (u_tracks > CDIO_CD_MAX_TRACKS) {
+  u_tracks = i_last_track - p_env->tochdr.cdth_trk0 + 1;
+  if (i_last_track > CDIO_CD_MAX_TRACKS) {
      cdio_log(CDIO_LOG_WARN, "Number of tracks exceeds maximum (%d vs. %d)\n",
               u_tracks, CDIO_CD_MAX_TRACKS);
-     p_env->gen.i_tracks = CDIO_CD_MAX_TRACKS;
+     i_last_track = CDIO_CD_MAX_TRACKS;
   }
+
+  p_env->gen.i_first_track = p_env->tochdr.cdth_trk0;
+  p_env->gen.i_tracks      = i_last_track - p_env->gen.i_first_track + 1;
 
 
   /* read individual tracks */
