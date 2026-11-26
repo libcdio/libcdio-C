@@ -837,6 +837,86 @@ check_repeated_keywords(void)
   return ret;
 }
 
+/* CD-TEXT the way cdrdao read-toc writes it: a LANGUAGE_MAP and binary
+   items (SIZE_INFO, TOC_INFO1, GENRE) in braces, over several lines */
+static int
+check_cdrdao_cdtext(void)
+{
+  const char *bin_name = "cdrdao-keywords.bin";
+  CdIo_t *p_cdio;
+  cdtext_t *p_cdtext;
+  const char *psz;
+  int ret = 0;
+
+  if (write_zeros(bin_name, 4 * CDIO_CD_FRAMESIZE_RAW))
+    return 1;
+  p_cdio = open_toc("CD_DA\n"
+                    "\n"
+                    "CD_TEXT {\n"
+                    "  LANGUAGE_MAP {\n"
+                    "    0: 9\n"
+                    "  }\n"
+                    "  LANGUAGE 0 {\n"
+                    "    TITLE \"Album\"\n"
+                    "    PERFORMER \"Artist\"\n"
+                    "    GENRE { 0,  0,  0}\n"
+                    "    TOC_INFO1\n"
+                    "    { 1,  1,  1,  0}\n"
+                    "    SIZE_INFO { 0,  1,  1,  0,  2,  2,  0,  0,  0,  0,  0,  0,\n"
+                    "                0,  0,  0,  0,  0,  0,  0,  3,  3,  0,  0,  0,\n"
+                    "                0,  0,  0,  0,  9,  0,  0,  0,  0,  0,  0,  0}\n"
+                    "  }\n"
+                    "}\n"
+                    "\n"
+                    "TRACK AUDIO\n"
+                    "CD_TEXT {\n"
+                    "  LANGUAGE 0 {\n"
+                    "    TITLE \"Song\"\n"
+                    "    PERFORMER \"Singer\"\n"
+                    "  }\n"
+                    "}\n"
+                    "FILE \"cdrdao-keywords.bin\" 0\n");
+  if (!p_cdio) {
+    fprintf(stderr, "Incorrect: cdrdao's CD-TEXT doesn't open.\n");
+    remove(bin_name);
+    return 1;
+  }
+
+  p_cdtext = cdio_get_cdtext(p_cdio);
+  if (!p_cdtext) {
+    fprintf(stderr, "Incorrect: cdrdao's CD-TEXT isn't read.\n");
+    ret = 1;
+  } else {
+    const struct { cdtext_field_t field; track_t track; const char *value; }
+      expect[] = {
+        { CDTEXT_FIELD_TITLE, 0, "Album" },
+        { CDTEXT_FIELD_PERFORMER, 0, "Artist" },
+        { CDTEXT_FIELD_TITLE, 1, "Song" },
+        { CDTEXT_FIELD_PERFORMER, 1, "Singer" },
+      };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(expect) / sizeof(expect[0]); i++) {
+      psz = cdtext_get_const(p_cdtext, expect[i].field, expect[i].track);
+      if (!psz || strcmp(psz, expect[i].value)) {
+        fprintf(stderr, "Incorrect: CD-TEXT %s of track %d is %s, not %s.\n",
+                cdtext_field2str(expect[i].field), expect[i].track,
+                psz ? psz : "(none)", expect[i].value);
+        ret = 1;
+      }
+    }
+    /* The binary GENRE is not kept, rather than kept as text */
+    psz = cdtext_get_const(p_cdtext, CDTEXT_FIELD_GENRE, 0);
+    if (psz) {
+      fprintf(stderr, "Incorrect: binary GENRE read as \"%s\".\n", psz);
+      ret = 1;
+    }
+  }
+  cdio_destroy(p_cdio);
+  remove(bin_name);
+  return ret;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -897,7 +977,7 @@ main(int argc, const char *argv[])
     ret = 1;
   if (check_bad_datafile_length() || check_read_past_end())
     ret = 1;
-  if (check_repeated_keywords())
+  if (check_repeated_keywords() || check_cdrdao_cdtext())
     ret = 1;
 #ifdef HAVE_CHDIR
       if (0 == chdir(DATA_DIR))

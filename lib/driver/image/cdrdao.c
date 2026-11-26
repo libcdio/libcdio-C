@@ -317,6 +317,26 @@ free_track_file(track_info_t *p_tocent)
   }
 }
 
+/*!
+  Skips a "{ ... }" block that the TOC file parser doesn't keep, such as
+  the binary CD-TEXT data cdrdao writes (SIZE_INFO { 0, 1, ... }), which
+  may span lines.  Called with the text where the block may start, then
+  with each following line until it returns false, when the block's closing
+  brace has been reached.  The opening brace may be on a later line than
+  the keyword.
+*/
+static bool
+skip_block (const char *psz_text, unsigned int *pi_nest)
+{
+  for (; psz_text && *psz_text; psz_text++) {
+    if ('{' == *psz_text)
+      (*pi_nest)++;
+    else if ('}' == *psz_text && *pi_nest > 0 && 0 == --(*pi_nest))
+      return false;
+  }
+  return true;
+}
+
 static bool
 parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 {
@@ -332,6 +352,8 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
 
   /* The below declaration(s) may be unique to this image-parse routine. */
   unsigned int i_cdtext_nest = 0;
+  bool b_skipping = false;          /* inside a block being skipped */
+  unsigned int i_skip_nest = 0;     /* its braces opened so far */
   char *saveptr;
 
   if (NULL == psz_cue_name)
@@ -362,6 +384,12 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
     /* //comment */
     if ((psz_field = strstr (psz_line, "//")))
       *psz_field = '\0';
+
+    /* The rest of a block being skipped (see skip_block()) */
+    if (b_skipping) {
+      b_skipping = skip_block (psz_line, &i_skip_nest);
+      continue;
+    }
 
     saveptr = NULL;
     if ((psz_keyword = strtok_r(psz_line, " \t\n\r", &saveptr))) {
@@ -1030,9 +1058,17 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
           goto err_exit;
         }
 
-      // TODO: implement language mapping
-      } else if (0 == strcmp ("LANGUAGE_MAP", psz_keyword)) {
-        /* LANGUAGE d { ... } */
+      /* LANGUAGE_MAP { 0: 9 ... }, and the binary CD-TEXT data that cdrdao
+         writes, SIZE_INFO { 0, 1, ... } and TOC_INFO1/2 { ... }, possibly
+         over several lines.  None of it is kept: the language mapping is
+         not implemented (all CD-TEXT is taken as English), and the binary
+         items are derived from the others or have nowhere to go. */
+      } else if (0 == strcmp ("LANGUAGE_MAP", psz_keyword)
+                 || 0 == strcmp ("SIZE_INFO", psz_keyword)
+                 || 0 == strcmp ("TOC_INFO1", psz_keyword)
+                 || 0 == strcmp ("TOC_INFO2", psz_keyword)) {
+        i_skip_nest = 0;
+        b_skipping = skip_block (saveptr, &i_skip_nest);
       } else if (0 == strcmp ("LANGUAGE", psz_keyword)) {
         /* Language number */
         if (NULL == (psz_field = strtok_r(NULL, " \t\n\r", &saveptr))) {
@@ -1047,7 +1083,14 @@ parse_tocfile (_img_private_t *cd, const char *psz_cue_name)
         if (i_cdtext_nest > 0) i_cdtext_nest--;
       } else if ( CDTEXT_FIELD_INVALID !=
           (cdtext_key = cdtext_is_field (psz_keyword)) ) {
-        if (NULL != cd) {
+        const char *psz_value =
+          saveptr ? saveptr + strspn (saveptr, " \t") : NULL;
+        if (psz_value && '{' == *psz_value) {
+          /* The binary form, GENRE { 0, 9, ... } as cdrdao writes it, is
+             not kept */
+          i_skip_nest = 0;
+          b_skipping = skip_block (psz_value, &i_skip_nest);
+        } else if (NULL != cd) {
           if (NULL == cd->gen.cdtext) {
             cd->gen.cdtext = cdtext_init ();
             /* until language mapping is implemented ...*/
