@@ -32,21 +32,19 @@
 # define NULL 0
 #endif
 
-#ifdef __CYGWIN__
-# undef DOSISH
-#endif
-#if defined __CYGWIN__ || defined DOSISH
-# define DOSISH_UNC
-# define DOSISH_DRIVE_LETTER
-# define FILE_ALT_SEPARATOR '\\'
-#endif
-
 #ifndef CDIO_FILE_SEPARATOR
 # define CDIO_FILE_SEPARATOR '/'
 #endif
 
-#if defined __CYGWIN__ || defined DOSISH
-# define FILE_ALT_SEPARATOR '\\'
+/* Windows takes backslashes as well as slashes in paths, and a drive
+   letter starts an absolute path there. */
+#if defined(_WIN32) || defined(__CYGWIN__)
+# define CDIO_FILE_ALT_SEPARATOR '\\'
+# define has_drive_letter(p) \
+    ((((p)[0] >= 'A' && (p)[0] <= 'Z') || ((p)[0] >= 'a' && (p)[0] <= 'z')) \
+     && (p)[1] == ':')
+#else
+# define has_drive_letter(p) 0
 #endif
 
 #ifdef CDIO_FILE_ALT_SEPARATOR
@@ -93,7 +91,7 @@ cdio_dirname(const char *fname)
 char *
 cdio_abspath(const char *cwd, const char *fname)
 {
-    if (isdirsep(*fname))
+    if (isdirsep(*fname) || has_drive_letter(fname))
       return strdup(fname);
     else {
       size_t len   = strlen(cwd) + strlen(fname) + 2;
