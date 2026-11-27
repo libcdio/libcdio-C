@@ -545,6 +545,10 @@ run_mmc_cmd_win32ioctl( void *p_user_data,
     default:
       rc = DRIVER_OP_ERROR;
     }
+  } else if (swb.sptd.ScsiStatus) {
+    cdio_info("MMC command code 0x%x failed with SCSI status 0x%x",
+	      p_cdb->field[0], swb.sptd.ScsiStatus);
+    rc = DRIVER_OP_ERROR;
   }
 
 #ifdef FIXED_ADDITIONAL_SENSE_BUF
@@ -656,6 +660,14 @@ run_mmc_cmd_win32ioctl( void *p_user_data,
     memcpy((void *) p_env->gen.scsi_mmc_sense, &(p_sptwb->ucSenseBuf),
 	   i_sense_size);
     p_env->gen.scsi_mmc_sense_valid = p_sptwb->Spt.SenseInfoLength;
+  }
+
+  /* The ioctl succeeds even when the drive rejects the command, so the
+     command's own status must be checked too, as other drivers' are */
+  if (DRIVER_OP_SUCCESS == rc && p_sptwb->Spt.ScsiStatus) {
+    cdio_info("MMC command code 0x%x failed with SCSI status 0x%x",
+	      p_cdb->field[0], p_sptwb->Spt.ScsiStatus);
+    rc = DRIVER_OP_ERROR;
   }
   free(p_sptwb);
 
@@ -1003,9 +1015,11 @@ read_fulltoc_win32mmc (_img_private_t *p_env)
 {
   mmc_cdb_t  cdb = {{0, }};
   CDROM_TOC_FULL  cdrom_toc_full;
-  int             i_status, i, j;
-  int             i_track_format = 0;
-  int             i_seen_flag;
+  int             i_status, i, j, i_entries;
+  int             i_first_track = CDIO_CD_MAX_TRACKS + 1, i_last_track = 0;
+  uint8_t         session_format[256];
+  const TRACK_DATA_FULL *track_entry[CDIO_CD_MAX_TRACKS + 1];
+  const TRACK_DATA_FULL *p_leadout = NULL;
 
   /* Operation code */
   CDIO_MMC_SET_COMMAND(cdb.field, CDIO_MMC_GPCMD_READ_TOC);
@@ -1030,71 +1044,74 @@ read_fulltoc_win32mmc (_img_private_t *p_env)
     return false;
   }
 
-  i_seen_flag=0;
-  for( i = 0 ; i <= CDIO_CD_MAX_TRACKS+3; i++ ) {
+  /* The descriptors that the drive returned, after the 4-byte header.
+     A disc with several sessions, such as a CD Extra, has descriptors
+     for each: its tracks are those of all the sessions, and its
+     lead-out is the last session's.  As in the OS X driver, the
+     first and last track are taken from the tracks' own descriptors. */
+  i_entries = ((cdrom_toc_full.Length[0] << 8) + cdrom_toc_full.Length[1] - 2)
+    / (int) sizeof(TRACK_DATA_FULL);
+  if (i_entries > (int) (sizeof(cdrom_toc_full.TrackData)
+                         / sizeof(TRACK_DATA_FULL)))
+    i_entries = sizeof(cdrom_toc_full.TrackData) / sizeof(TRACK_DATA_FULL);
 
-    if ( 0xA0 == cdrom_toc_full.TrackData[i].POINT ) {
-      /* First track number */
-      p_env->gen.i_first_track = cdrom_toc_full.TrackData[i].PMIN;
-      i_track_format = cdrom_toc_full.TrackData[i].PSEC;
-      i_seen_flag|=0x01;
+  memset(session_format, 0, sizeof(session_format));
+  memset(track_entry, 0, sizeof(track_entry));
+  for (i = 0; i < i_entries; i++) {
+    const TRACK_DATA_FULL *p_entry = &cdrom_toc_full.TrackData[i];
+    const int i_point = p_entry->POINT;
+
+    /* Other ADRs, such as mode 5's, use POINT for something else */
+    if (1 != p_entry->Adr) continue;
+
+    if (0xA0 == i_point) {
+      /* The format of the session's disc: CD-DA or CD-ROM, CD-I, XA */
+      session_format[p_entry->SessionNumber] = p_entry->PSEC;
+    } else if (0xA2 == i_point) {
+      /* The session's lead-out, of which the disc's is the last */
+      if (!p_leadout || p_entry->SessionNumber >= p_leadout->SessionNumber)
+        p_leadout = p_entry;
+    } else if (i_point >= CDIO_CD_MIN_TRACK_NO
+               && i_point <= CDIO_CD_MAX_TRACKS) {
+      track_entry[i_point] = p_entry;
+      if (i_point < i_first_track) i_first_track = i_point;
+      if (i_point > i_last_track)  i_last_track  = i_point;
     }
-
-    if ( 0xA1 == cdrom_toc_full.TrackData[i].POINT ) {
-      /* Last track number */
-      p_env->gen.i_tracks =
-        cdrom_toc_full.TrackData[i].PMIN - p_env->gen.i_first_track + 1;
-      i_seen_flag|=0x02;
-    }
-
-    j = cdrom_toc_full.TrackData[i].POINT;
-    if ( 0xA2 ==  j ) {
-      /* Start position of the lead out */
-      p_env->tocent[ p_env->gen.i_tracks ].start_lsn =
-        cdio_lba_to_lsn(
-                        cdio_msf3_to_lba(
-                                         cdrom_toc_full.TrackData[i].PMIN,
-                                         cdrom_toc_full.TrackData[i].PSEC,
-                                         cdrom_toc_full.TrackData[i].PFRAME
-                                         )
-                        );
-      p_env->tocent[ p_env->gen.i_tracks ].Control
-        = cdrom_toc_full.TrackData[i].Control;
-      p_env->tocent[ p_env->gen.i_tracks ].Format  = i_track_format;
-      i_seen_flag|=0x04;
-    }
-
-    if (cdrom_toc_full.TrackData[i].POINT > 0
-        && cdrom_toc_full.TrackData[i].POINT <= p_env->gen.i_tracks) {
-      p_env->tocent[j-1].start_lsn =
-        cdio_lba_to_lsn(
-                        cdio_msf3_to_lba(
-                                         cdrom_toc_full.TrackData[i].PMIN,
-                                         cdrom_toc_full.TrackData[i].PSEC,
-                                         cdrom_toc_full.TrackData[i].PFRAME
-                                         )
-                        );
-      p_env->tocent[j-1].Control =
-        cdrom_toc_full.TrackData[i].Control;
-      p_env->tocent[j-1].Format  = i_track_format;
-
-      set_track_flags(&(p_env->gen.track_flags[j]),
-                      p_env->tocent[j-1].Control);
-
-      cdio_debug("p_sectors: %i, %lu", i,
-                 (unsigned long int) (p_env->tocent[i].start_lsn));
-
-      if (cdrom_toc_full.TrackData[i].POINT == p_env->gen.i_tracks)
-        i_seen_flag|=0x08;
-    }
-
-    if ( 0x0F == i_seen_flag ) break;
   }
-  if ( 0x0F == i_seen_flag ) {
-    p_env->gen.toc_init = true;
-    return true;
+
+  if (!p_leadout || i_first_track > i_last_track) {
+    cdio_debug ("SCSI MMC READ_TOC returned no tracks or no lead-out\n");
+    return false;
   }
-  return false;
+  for (j = i_first_track; j <= i_last_track; j++)
+    if (!track_entry[j]) {
+      cdio_debug ("SCSI MMC READ_TOC has no entry for track %d\n", j);
+      return false;
+    }
+
+  p_env->gen.i_first_track = i_first_track;
+  p_env->gen.i_tracks = i_last_track - i_first_track + 1;
+
+  for (j = i_first_track; j <= i_last_track + 1; j++) {
+    const TRACK_DATA_FULL *p_entry =
+      j <= i_last_track ? track_entry[j] : p_leadout;
+    i = j - i_first_track;
+
+    p_env->tocent[i].start_lsn =
+      cdio_lba_to_lsn(cdio_msf3_to_lba(p_entry->PMIN, p_entry->PSEC,
+                                       p_entry->PFRAME));
+    p_env->tocent[i].Control = p_entry->Control;
+    p_env->tocent[i].Format  = session_format[p_entry->SessionNumber];
+
+    if (j <= i_last_track)
+      set_track_flags(&(p_env->gen.track_flags[j]), p_entry->Control);
+
+    cdio_debug("p_sectors: %i, %lu", i,
+               (unsigned long int) (p_env->tocent[i].start_lsn));
+  }
+
+  p_env->gen.toc_init = true;
+  return true;
 }
 
 /**
