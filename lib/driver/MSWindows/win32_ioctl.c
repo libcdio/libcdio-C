@@ -545,6 +545,10 @@ run_mmc_cmd_win32ioctl( void *p_user_data,
     default:
       rc = DRIVER_OP_ERROR;
     }
+  } else if (swb.sptd.ScsiStatus) {
+    cdio_info("MMC command code 0x%x failed with SCSI status 0x%x",
+	      p_cdb->field[0], swb.sptd.ScsiStatus);
+    rc = DRIVER_OP_ERROR;
   }
 
 #ifdef FIXED_ADDITIONAL_SENSE_BUF
@@ -656,6 +660,14 @@ run_mmc_cmd_win32ioctl( void *p_user_data,
     memcpy((void *) p_env->gen.scsi_mmc_sense, &(p_sptwb->ucSenseBuf),
 	   i_sense_size);
     p_env->gen.scsi_mmc_sense_valid = p_sptwb->Spt.SenseInfoLength;
+  }
+
+  /* The ioctl succeeds even when the drive rejects the command, so the
+     command's own status must be checked too, as other drivers' are */
+  if (DRIVER_OP_SUCCESS == rc && p_sptwb->Spt.ScsiStatus) {
+    cdio_info("MMC command code 0x%x failed with SCSI status 0x%x",
+	      p_cdb->field[0], p_sptwb->Spt.ScsiStatus);
+    rc = DRIVER_OP_ERROR;
   }
   free(p_sptwb);
 
