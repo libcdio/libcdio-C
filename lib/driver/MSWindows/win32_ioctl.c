@@ -1307,6 +1307,50 @@ get_cdtext_win32ioctl (void *p_user_data)
 }
 
 /**
+  Read the MCN, or a track's ISRC, with READ SUB-CHANNEL.  Return
+  DRIVER_OP_SUCCESS with *ppsz_code NULL when the drive has none, and
+  an error when the drive didn't return the data.
+ */
+static driver_return_code_t
+read_mcn_isrc_win32mmc (const _img_private_t *p_env, track_t i_track,
+                        uint8_t i_format, /*out*/ char **ppsz_code)
+{
+  mmc_cdb_t cdb = {{0, }};
+  uint8_t buf[24] = {0, }; /* 4 header + 20 data (MMC-4 tables 424, 431, 432) */
+  const size_t length = (CDIO_SUBCHANNEL_MEDIA_CATALOG == i_format)
+    ? CDIO_MCN_SIZE : CDIO_ISRC_SIZE;
+  char *psz_code;
+
+  *ppsz_code = NULL;
+
+  CDIO_MMC_SET_COMMAND(cdb.field, CDIO_MMC_GPCMD_READ_SUBCHANNEL);
+  cdb.field[2] = 0x40; /* SubQ */
+  cdb.field[3] = i_format;
+  cdb.field[6] = i_track;
+  CDIO_MMC_SET_LEN16(cdb.field, 7, sizeof(buf));
+
+  if (DRIVER_OP_SUCCESS !=
+      run_mmc_cmd_win32ioctl((void *) p_env, mmc_timeout_ms,
+                             mmc_get_cmd_len(cdb.field[0]), &cdb,
+                             SCSI_MMC_DATA_READ, sizeof(buf), buf))
+    return DRIVER_OP_ERROR;
+
+  /* A drive rejecting the command may leave the buffer as it was:
+     check that the reply has the data asked for */
+  if (((buf[2] << 8) | buf[3]) < 5 + length || buf[4] != i_format)
+    return DRIVER_OP_ERROR;
+
+  if (buf[8] & 0x80) { /* MCVAL / TCVAL: the code is valid */
+    psz_code = calloc(1, length + 1);
+    if (!psz_code)
+      return DRIVER_OP_ERROR;
+    memcpy(psz_code, &buf[9], length);
+    *ppsz_code = psz_code;
+  }
+  return DRIVER_OP_SUCCESS;
+}
+
+/**
   Return the media catalog number MCN.
 
   Note: string is malloc'd so caller should free() then returned
@@ -1319,6 +1363,13 @@ get_mcn_win32ioctl (const _img_private_t *p_env) {
   DWORD dw_bytes_returned;
   SUB_Q_MEDIA_CATALOG_NUMBER mcn;
   CDROM_SUB_Q_DATA_FORMAT q_data_format;
+  char *psz_mcn;
+
+  /* Ask the drive first, as rippers do and as the Windows CD-ROM
+     driver does for the ioctl, which Wine doesn't fully implement */
+  if (DRIVER_OP_SUCCESS ==
+      read_mcn_isrc_win32mmc(p_env, 0, CDIO_SUBCHANNEL_MEDIA_CATALOG, &psz_mcn))
+    return psz_mcn;
 
   memset( &mcn, 0, sizeof(mcn) );
 
@@ -1334,7 +1385,7 @@ get_mcn_win32ioctl (const _img_private_t *p_env) {
                        &q_data_format, sizeof(q_data_format),
                        &mcn, sizeof(mcn),
                        &dw_bytes_returned, NULL ) ) {
-    cdio_warn( "could not read Q Channel at track %d", 1);
+    cdio_warn( "could not read the media catalog number" );
   } else if (mcn.Mcval)
     return strdup((const char *) mcn.MediaCatalog);
   return NULL;
@@ -1353,6 +1404,12 @@ get_track_isrc_win32ioctl (const _img_private_t *p_env, track_t i_track) {
   DWORD dw_bytes_returned;
   SUB_Q_TRACK_ISRC isrc;
   CDROM_SUB_Q_DATA_FORMAT q_data_format;
+  char *psz_isrc;
+
+  /* Ask the drive first, as for the MCN */
+  if (DRIVER_OP_SUCCESS ==
+      read_mcn_isrc_win32mmc(p_env, i_track, CDIO_SUBCHANNEL_TRACK_ISRC, &psz_isrc))
+    return psz_isrc;
 
   memset( &isrc, 0, sizeof(isrc) );
 
@@ -1364,7 +1421,7 @@ get_track_isrc_win32ioctl (const _img_private_t *p_env, track_t i_track) {
                        &q_data_format, sizeof(q_data_format),
                        &isrc, sizeof(isrc),
                        &dw_bytes_returned, NULL ) ) {
-    cdio_warn( "could not read Q Channel at track %d", 1);
+    cdio_warn( "could not read the ISRC of track %d", i_track );
   } else if (isrc.Tcval)
     return strdup((const char *) isrc.TrackIsrc);
   return NULL;
