@@ -1206,8 +1206,27 @@ get_last_session_win32ioctl (void *p_user_data,
                     NULL, (DWORD) 0, &session, sizeof(session), &dw_bytes_returned, NULL);
 
   if ( ! b_success ) {
+    /* Wine doesn't implement the ioctl: ask the drive itself, with the
+       READ TOC/PMA/ATIP that it stands for */
+    mmc_cdb_t cdb = {{0, }};
+    uint8_t buf[12] = {0, };
+    const uint8_t *p_start = &buf[8];
+
     windows_error(CDIO_LOG_INFO, GetLastError());
-    return DRIVER_OP_ERROR;
+
+    CDIO_MMC_SET_COMMAND(cdb.field, CDIO_MMC_GPCMD_READ_TOC);
+    cdb.field[2] = CDIO_MMC_READTOC_FMT_SESSION;
+    CDIO_MMC_SET_LEN16(cdb.field, 7, sizeof(buf));
+
+    if (DRIVER_OP_SUCCESS !=
+        run_mmc_cmd_win32ioctl((void *) p_env, mmc_timeout_ms,
+                               mmc_get_cmd_len(cdb.field[0]), &cdb,
+                               SCSI_MMC_DATA_READ, sizeof(buf), buf))
+      return DRIVER_OP_ERROR;
+
+    /* The start of the last session's first track, after the header */
+    *i_last_session = CDIO_MMC_GET_LEN32(p_start);
+    return DRIVER_OP_SUCCESS;
   }
 
   *i_last_session = (session.TrackData[0].Address[0] << 24) |
